@@ -1,0 +1,11 @@
+target/
+node_modules/
+*.zkey
+*.ptau
+*.wtns
+build/
+.stellar/
+.soroban/
+*.wasm
+identity.txt
+.env
