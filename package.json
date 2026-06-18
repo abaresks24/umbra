@@ -1,0 +1,18 @@
+{
+  "name": "shielded-usdc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Shielded USDC wallet on Stellar — off-chain ZK tooling + CLI",
+  "scripts": {
+    "build:circuit": "bash circuits/build_transfer.sh"
+  },
+  "dependencies": {
+    "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
+    "ffjavascript": "^0.3.1",
+    "fixed-merkle-tree": "^0.7.3",
+    "js-sha3": "^0.9.3",
+    "snarkjs": "^0.7.6"
+  }
+}

@@ -40,8 +40,18 @@ Hackathon: *Stellar Hacks: Real-World ZK* · deadline **June 29, 12:00 PST** · 
 
 **Repro:** `circuits/build_multiplier.sh` → `scripts/phase0_deploy_verify.sh` (gate a); `cd contracts/poseidon-match && cargo test` (gate b); `scripts/poseidon-golden/gen.js` regenerates golden vectors.
 
-### Phase 1 — ZK core offline 🔴
-### Phase 2 — On-chain integration 🔴
+### Phase 1 — ZK core 🟢 COMPLETE — submittable
+- [x] `transfer.circom` 2-in/2-out (shield/transfer/unshield via signed publicAmount + dummy notes); ~14.5k constraints, 7 public inputs
+- [x] Trusted setup (powers-of-tau 2^15 + phase2), `transfer_final.zkey` + `transfer_vk.json`
+- [x] Off-chain lib in `client/lib/` (reused by web in Phase 3): `crypto.js` (Poseidon/Keypair/Note), `tree.js` (incremental Merkle depth 8), `extdata.js`, `transaction.js` (witness+prove), `onchain.js`
+- [x] 🟢 **Gate:** `scripts/lifecycle.js` runs shield→transfer→unshield with **all 3 proofs verified on testnet**. Verifier `CDWKLYTPXDFCRFIRFBX3NOSV6KGRYRVKTRBMV4DUOIDUJ74WTJ65VYVQ`
+- [x] Soundness tests (`test/02_negative.js`): tampered publicAmount/commitment, non-conservation, double-spend (dup nullifier), forged membership — all correctly rejected
+- [x] Local lifecycle (`test/01_local_lifecycle.js`) + on-chain lifecycle both green
+
+**Repro:** `./circuits/build_transfer.sh` (setup) → `node test/01_local_lifecycle.js` (local) → `node scripts/lifecycle.js` (on testnet) → `node test/02_negative.js` (soundness).
+
+### Phase 2 — On-chain integration 🔴 NEXT
+Pool contract: on-chain incremental Merkle tree (host Poseidon), root-history ring buffer, nullifier set, `transact(proof, extData, publicSignals)` + shield/unshield via SAC USDC, events with encrypted note payloads. Will benchmark real `transact` cost to finalize depth (≤8).
 ### Phase 3 — View-key compliance + web wallet 🔴
 ### Phase 4 — Polish + demo 🔴
 ### Phase 5 — Submission 🔴
