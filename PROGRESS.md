@@ -50,8 +50,16 @@ Hackathon: *Stellar Hacks: Real-World ZK* · deadline **June 29, 12:00 PST** · 
 
 **Repro:** `./circuits/build_transfer.sh` (setup) → `node test/01_local_lifecycle.js` (local) → `node scripts/lifecycle.js` (on testnet) → `node test/02_negative.js` (soundness).
 
-### Phase 2 — On-chain integration 🔴 NEXT
-Pool contract: on-chain incremental Merkle tree (host Poseidon), root-history ring buffer, nullifier set, `transact(proof, extData, publicSignals)` + shield/unshield via SAC USDC, events with encrypted note payloads. Will benchmark real `transact` cost to finalize depth (≤8).
+### Phase 2 — On-chain integration 🟢 COMPLETE — TRIP-WIRE CLEARED
+- [x] Pool contract (`contracts/pool`): on-chain incremental Merkle tree (host Poseidon, depth 8), root-history ring buffer (30), nullifier set, `transact` entrypoint
+- [x] extDataHash recomputed on-chain (keccak, byte-matched to JS) — binds recipient/amounts to the proof; **verified matching on testnet**
+- [x] publicAmount bound to `field(ext_amount - fee)`; USDC SAC shield-in / unshield-out (test USDC `CCDJQFER…27JY`)
+- [x] Events: NewCommitment (per output, with ciphertext) + nullifiers
+- [x] On-chain tree root verified identical to off-chain `fixed-merkle-tree` (was de-risked first; now subsumed by lifecycle)
+- [x] 🟢 **Gate (`test/04_pool_lifecycle.js`):** shield→transfer→unshield on testnet, real USDC moved (user −100, recipient +40), **double-spend rejected**, **stale-but-recent root accepted**
+- [x] **Budget measured:** each `transact` ≈ **72M / 100M** instructions at depth 8 — comfortable. Latest pool `CBK3S3D777EUJXUPIOIOIN3XNFM4E4GFV76P62VIE3MGXY4UL2PIVOP6`
+
+**Repro:** `./scripts/setup_usdc.sh` (one-time) → `node test/04_pool_lifecycle.js`.
 ### Phase 3 — View-key compliance + web wallet 🔴
 ### Phase 4 — Polish + demo 🔴
 ### Phase 5 — Submission 🔴
