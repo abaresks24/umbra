@@ -6,6 +6,8 @@ const snarkjs = require("snarkjs");
 const { initPoseidon, Keypair, Note } = require("../client/lib/crypto");
 const { buildTree } = require("../client/lib/tree");
 const { buildWitness, prove } = require("../client/lib/transaction");
+const { setDefaultAuditor } = require("../client/lib/transaction");
+const { initAuditor, newAuditorKey } = require("../client/lib/auditor");
 
 const VK = JSON.parse(fs.readFileSync(path.join(__dirname, "../circuits/build/transfer_vk.json")));
 
@@ -25,6 +27,8 @@ async function step(name, params) {
 
 (async () => {
   await initPoseidon();
+  await initAuditor();
+  setDefaultAuditor(newAuditorKey());
   const alice = new Keypair();
   const bob = new Keypair();
   const tree = buildTree([]);

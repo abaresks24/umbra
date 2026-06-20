@@ -59,16 +59,17 @@ function unpackEnc(encHex) {
   return { recipCt: recip.toString("hex"), auditorCt: aud.toString("hex") };
 }
 
-// Build the enc blob for one output note, encrypted to recipient + auditor.
-function encryptOutput(note, recipientViewPubHex, auditorViewPubHex) {
+// Build the enc blob for one output note, encrypted to the RECIPIENT's viewing
+// key (for note discovery). Auditor disclosure is handled separately and is
+// ENFORCED in-circuit (see client/lib/auditor.js + circuits/transfer.circom),
+// not packed here.
+function encryptOutput(note, recipientViewPubHex) {
   const plaintext = {
     amount: note.amount.toString(),
     blinding: note.blinding.toString(),
     spendPub: note.pubkey.toString(),
   };
-  const recipCt = encryptTo(recipientViewPubHex, plaintext);
-  const auditorCt = encryptTo(auditorViewPubHex, plaintext);
-  return packEnc(recipCt, auditorCt);
+  return packEnc(encryptTo(recipientViewPubHex, plaintext), "");
 }
 
 module.exports = { newViewingKeypair, encryptTo, tryDecrypt, packEnc, unpackEnc, encryptOutput };

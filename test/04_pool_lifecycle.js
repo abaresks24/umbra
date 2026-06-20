@@ -8,6 +8,7 @@ const path = require("path");
 const { initPoseidon, Keypair, Note } = require("../client/lib/crypto");
 const { buildTree } = require("../client/lib/tree");
 const { buildWitness, prove } = require("../client/lib/transaction");
+const { initAuditor, newAuditorKey } = require("../client/lib/auditor");
 const { proofToHex, publicToHex, vkToHex } = require("../scripts/bn254_snark_hex");
 
 const ROOT = path.join(__dirname, "..");
@@ -54,11 +55,13 @@ function transactArgs({ proof, publicSignals, recipient, extAmount, fee = 0 }) {
 
 (async () => {
   await initPoseidon();
+  await initAuditor();
+  const auditor = newAuditorKey();
   console.log("== Phase 2 pool lifecycle ==\n");
   console.log(`USDC SAC: ${USDC_SAC}`);
 
   CID = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
-  inv(`init --token ${USDC_SAC} --vk_bytes ${vkToHex(VK)}`);
+  inv(`init --token ${USDC_SAC} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
   fs.writeFileSync(path.join(B, "pool_id.txt"), CID + "\n");
   console.log(`pool: ${CID}\n`);
 
@@ -85,7 +88,7 @@ function transactArgs({ proof, publicSignals, recipient, extAmount, fee = 0 }) {
   }
 
   async function doTransact(label, params, { send = true, expectFail = false } = {}) {
-    const { witness, outputCommitment } = buildWitness(params.build);
+    const { witness, outputCommitment } = buildWitness({ ...params.build, auditor: { pubX: auditor.pubX, pubY: auditor.pubY } });
     const { proof, publicSignals } = await prove(witness);
     const args = transactArgs({ proof, publicSignals, recipient: params.recipient, extAmount: params.extAmount });
     const cost = instructionsOf(args);

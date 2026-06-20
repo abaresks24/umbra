@@ -68,28 +68,33 @@ recipient/amounts can't be tampered with after proving.
   output commitments, moves USDC at the edges via the **USDC SAC**, and emits
   events carrying the encrypted note payloads.
 
-Every `transact` costs **~72M / 100M** instructions at depth 8 — comfortably
-within Soroban's budget.
+Every `transact` costs **~85M / 100M** instructions at depth 8 (including the
+in-circuit auditor encryption) — within Soroban's budget.
 
-## Compliance — the view key (the differentiator)
+## Compliance — ENFORCED auditor disclosure (the differentiator)
 
-Each output note is encrypted to **two** keys (NaCl `box`, Curve25519):
+Two independent mechanisms:
 
-1. the **recipient's viewing key** — so they *discover* incoming notes by scanning
-   events and trial-decrypting;
-2. a fixed **auditor viewing key** — so an authorized auditor can reconstruct
-   **every amount and owner**.
+1. **Recipient discovery** — each output is encrypted to the recipient's viewing
+   key (NaCl `box`, Curve25519), so they find incoming notes by scanning events.
+2. **Auditor disclosure — enforced *inside the circuit*.** Each output is *also*
+   encrypted to a fixed **auditor key** using **Baby Jubjub ElGamal + Poseidon**,
+   and the circuit constrains that the ciphertext is a correct encryption of the
+   *same* `(amount, pubkey, blinding)` committed in the note. The contract **pins
+   the auditor's public key** and rejects any proof not encrypted to it. Result:
+   **it is cryptographically impossible to mint a note the auditor cannot
+   decrypt** — validators enforce it, not an honest client.
 
-Run `node scripts/demo.js` to see it: the blockchain shows only opaque
-commitments; the recipient scans and finds exactly their note; the auditor
-reconstructs the whole ledger. **Privacy ≠ opacity.**
+```
+R = r·B8 ; S = r·auditorPub ; key_t = Poseidon(S.x, S.y, t)
+cipher_t[j] = note_t[j] + Poseidon(key_t, j)      ← constrained in-circuit
+auditor decrypts: S = auditorPriv·R ; note_t[j] = cipher_t[j] - Poseidon(key_t, j)
+```
 
-> **Honest limitation.** This is the *voluntary/encryption-based* variant: the
-> auditor ciphertext is produced by the honest sender's client, **not enforced in
-> the circuit**. A malicious sender could omit it. The **strong** variant —
-> constraining the auditor ciphertext's well-formedness *inside* the circuit, so
-> it is cryptographically impossible to mint a note the auditor can't decrypt —
-> is the natural next step (see *Limitations* below).
+Run `node scripts/demo.js`: the chain shows only opaque commitments; the recipient
+scans and finds exactly their note; the auditor reconstructs the whole ledger from
+the on-chain ciphertext. `node test/08_enforcement.js` proves a proof encrypted to
+a *different* auditor key is **rejected on-chain**. **Privacy ≠ opacity.**
 
 ---
 
@@ -101,9 +106,13 @@ reconstructs the whole ledger. **Privacy ≠ opacity.**
 - The nullifiers are correctly derived (so double-spends are detectable).
 - Value is conserved; no notes are created from nothing; no negative amounts.
 - The external data (recipient, amounts, ciphertexts) is bound to the proof.
+- **Every output note is encrypted to the pinned auditor key** — auditor
+  completeness is cryptographically enforced, not voluntary.
 
 **Does NOT prove / known limitations:**
-- **Auditor completeness is not circuit-enforced** (voluntary disclosure variant).
+- **Recipient discovery ciphertext is not circuit-enforced** — but that only
+  affects whether the *recipient* can find their own note (their own interest),
+  not auditability.
 - **Note scanning is simplified** — clients trial-decrypt all events; no optimized
   indexer.
 - **Trusted setup** — Groth16 needs a per-circuit setup; this demo runs a local
@@ -125,7 +134,11 @@ Soundness is tested, not assumed (`test/`):
   double-spend (duplicate nullifier), and forged Merkle membership are all rejected.
 - **Full lifecycle** — shield → private transfer → unshield on testnet with real
   USDC moving; **double-spend rejected**; **stale-but-recent root accepted**.
-- **Encryption** — recipient + auditor decrypt; a stranger learns nothing.
+- **In-circuit ElGamal** — the auditor encryption computed in-circuit matches the
+  off-chain encrypter byte-for-byte and decrypts back.
+- **Enforced disclosure** — the auditor reconstructs every note from the on-chain
+  ciphertext, and a proof encrypted to a **different** auditor key is **rejected
+  on-chain**.
 
 ## Repo layout
 
@@ -159,12 +172,15 @@ stellar keys generate shield --network testnet --fund
 ./scripts/setup_usdc.sh
 
 # 5. The tests
-node test/05_encryption.js                 # encryption + auditor
 (cd contracts/poseidon-match && cargo test) # Poseidon byte-match
+node test/05_encryption.js                 # recipient encryption
+node test/06_elgamal_match.js              # in-circuit BJJ ElGamal == off-chain
+node test/07_enforced_audit.js             # auditor decrypts from public signals (offline)
 node test/01_local_lifecycle.js            # ZK lifecycle (offline)
-node scripts/lifecycle.js                  # proofs verified on testnet
 node test/02_negative.js                   # soundness
+node scripts/lifecycle.js                  # proofs verified on testnet
 node test/04_pool_lifecycle.js             # full pool lifecycle on testnet
+node test/08_enforcement.js                # auditor enforcement REJECTED on-chain
 
 # 6. The headline demo (private payment + recipient scan + auditor reconstruction)
 node scripts/demo.js

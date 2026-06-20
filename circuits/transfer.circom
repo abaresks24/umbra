@@ -17,6 +17,8 @@ include "poseidon.circom";
 include "comparators.circom";
 include "bitify.circom";
 include "switcher.circom";
+include "escalarmulany.circom";
+include "escalarmulfix.circom";
 
 template Keypair() {
     signal input privateKey;
@@ -83,6 +85,13 @@ template Transaction(levels, nIns, nOuts) {
     signal input outAmount[nOuts];
     signal input outPubkey[nOuts];
     signal input outBlinding[nOuts];
+
+    // --- ENFORCED auditor disclosure (Baby Jubjub ElGamal) ---
+    // Public so the contract can pin the auditor key and emit the ciphertext.
+    signal input auditorPubKey[2];          // fixed auditor BJJ pubkey (contract-pinned)
+    signal input auditorR[2];               // ephemeral pubkey R = r·B8
+    signal input auditorCipher[nOuts][3];   // ciphertext of (amount,pubkey,blinding) per output
+    signal input encRandom;                 // ephemeral scalar r (private)
 
     component inKeypair[nIns];
     component inCommitmentHasher[nIns];
@@ -165,7 +174,47 @@ template Transaction(levels, nIns, nOuts) {
     // bind extDataHash into the proof (keeps optimizer from dropping it)
     signal extDataSquare;
     extDataSquare <== extDataHash * extDataHash;
+
+    // ===== ENFORCED auditor encryption =====
+    // Prove each output note is encrypted to the fixed auditor key, so a valid
+    // proof is IMPOSSIBLE unless every note is auditor-decryptable. One ephemeral
+    // key for the tx: R = r·B8 (public), S = r·auditorPubKey (shared secret),
+    // per-output key = Poseidon(S.x,S.y,t), cipher[j] = msg[j] + Poseidon(key,j).
+    var BASE8[2] = [
+        5299619240641551281634865583518297030282874472190772894086521144482721001553,
+        16950150798460657717958625567821834550301663161624707787222815936182638968203
+    ];
+    component encBits = Num2Bits(251);
+    encBits.in <== encRandom;
+
+    component encR = EscalarMulFix(251, BASE8);
+    for (var i = 0; i < 251; i++) encR.e[i] <== encBits.out[i];
+    encR.out[0] === auditorR[0];
+    encR.out[1] === auditorR[1];
+
+    component encS = EscalarMulAny(251);
+    for (var i = 0; i < 251; i++) encS.e[i] <== encBits.out[i];
+    encS.p[0] <== auditorPubKey[0];
+    encS.p[1] <== auditorPubKey[1];
+
+    component encKey[nOuts];
+    component encKs[nOuts][3];
+    for (var t = 0; t < nOuts; t++) {
+        encKey[t] = Poseidon(3);
+        encKey[t].inputs[0] <== encS.out[0];
+        encKey[t].inputs[1] <== encS.out[1];
+        encKey[t].inputs[2] <== t;
+
+        for (var j = 0; j < 3; j++) {
+            encKs[t][j] = Poseidon(2);
+            encKs[t][j].inputs[0] <== encKey[t].out;
+            encKs[t][j].inputs[1] <== j;
+        }
+        auditorCipher[t][0] === outAmount[t] + encKs[t][0].out;
+        auditorCipher[t][1] === outPubkey[t] + encKs[t][1].out;
+        auditorCipher[t][2] === outBlinding[t] + encKs[t][2].out;
+    }
 }
 
-component main {public [root, publicAmount, extDataHash, inputNullifier, outputCommitment]} =
-    Transaction(8, 2, 2);
+component main {public [root, publicAmount, extDataHash, inputNullifier, outputCommitment,
+    auditorPubKey, auditorR, auditorCipher]} = Transaction(8, 2, 2);

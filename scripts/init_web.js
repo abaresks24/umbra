@@ -5,7 +5,7 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const { rpc } = require("@stellar/stellar-sdk");
-const { newViewingKeypair } = require("../client/lib/encryption");
+const { initAuditor, newAuditorKey } = require("../client/lib/auditor");
 const { vkToHex } = require("./bn254_snark_hex");
 
 const ROOT = path.join(__dirname, "..");
@@ -20,11 +20,12 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
   const server = new rpc.Server("https://soroban-testnet.stellar.org");
   const startLedger = (await server.getLatestLedger()).sequence - 1;
 
+  await initAuditor();
+  const auditor = newAuditorKey(); // Baby Jubjub — disclosure ENFORCED in-circuit
+
   console.log("deploying pool…");
   const poolId = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
-  sh(`stellar contract invoke --id ${poolId} --source shield --network testnet -- init --token ${e.USDC_SAC} --vk_bytes ${vkToHex(VK)}`);
-
-  const auditor = newViewingKeypair();
+  sh(`stellar contract invoke --id ${poolId} --source shield --network testnet -- init --token ${e.USDC_SAC} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
 
   // copy browser-served circuit artifacts
   fs.mkdirSync(path.join(ROOT, "web/public"), { recursive: true });
@@ -34,13 +35,13 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
   const config = {
     poolId, relayer: "shield",
     sac: e.USDC_SAC, userAddr: e.USER_ADDR, recipAddr: e.RECIP_ADDR,
-    auditorViewPub: auditor.viewPub, startLedger,
+    auditorPubX: auditor.pubX, auditorPubY: auditor.pubY, startLedger,
     rpc: "https://soroban-testnet.stellar.org",
   };
   fs.writeFileSync(path.join(B, "web_config.json"), JSON.stringify(config, null, 2));
 
   console.log("\n✅ web pool ready:", poolId);
   console.log("config -> circuits/build/web_config.json");
-  console.log("\nAUDITOR viewing SECRET (paste into the Auditor panel to demo disclosure):");
-  console.log("  " + auditor.viewSecret);
+  console.log("\nAUDITOR private key (paste into the Auditor panel to demo ENFORCED disclosure):");
+  console.log("  " + auditor.priv);
 })().catch((e) => { console.error("❌", e.message || e); process.exit(1); });

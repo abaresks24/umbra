@@ -7,6 +7,8 @@ const snarkjs = require("snarkjs");
 const { initPoseidon, Keypair, Note } = require("../client/lib/crypto");
 const { buildTree } = require("../client/lib/tree");
 const { buildWitness, prove } = require("../client/lib/transaction");
+const { setDefaultAuditor } = require("../client/lib/transaction");
+const { initAuditor, newAuditorKey } = require("../client/lib/auditor");
 
 const VK = JSON.parse(fs.readFileSync(path.join(__dirname, "../circuits/build/transfer_vk.json")));
 let pass = 0, fail = 0;
@@ -14,6 +16,8 @@ function check(name, cond) { console.log(`  ${cond ? "✅" : "❌"} ${name}`); c
 
 (async () => {
   await initPoseidon();
+  await initAuditor();
+  setDefaultAuditor(newAuditorKey());
   const alice = new Keypair();
   const tree = buildTree([]);
 

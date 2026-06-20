@@ -6,7 +6,8 @@ import { initPoseidon, Keypair, Note } from "../../client/lib/crypto";
 import { buildTree, merkleProof } from "../../client/lib/tree";
 import { buildWitness } from "../../client/lib/transaction";
 import { newViewingKeypair } from "../../client/lib/encryption";
-import { fetchCommitEvents, scanOwned, auditAll } from "../../client/lib/scan";
+import { initAuditor } from "../../client/lib/auditor";
+import { fetchCommitEvents, fetchAuditEvents, scanOwned, auditEnforced } from "../../client/lib/scan";
 import { proofToHex, publicToHex } from "../../scripts/bn254_snark_hex";
 
 const WASM_URL = "/transfer.wasm";
@@ -56,7 +57,7 @@ function markSpent(ns) {
 // ---- prove in-browser + submit via relayer ----
 async function proveAndSubmit(params, { recipient, extAmount }) {
   say("building proof in-browser (this takes a few seconds)…");
-  const r = buildWitness(params);
+  const r = buildWitness({ ...params, auditor: { pubX: CFG.auditorPubX, pubY: CFG.auditorPubY } });
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(r.witness, WASM_URL, ZKEY_URL);
   say("proof generated — submitting to relayer…");
   const body = {
@@ -80,7 +81,7 @@ function selectInputs(amount) {
   return { chosen, sum };
 }
 
-const enc = (recipients) => ({ auditorViewPub: CFG.auditorViewPub, senderViewPub: ME.viewPub, recipients });
+const enc = (recipients) => ({ senderViewPub: ME.viewPub, recipients });
 
 async function shield(amount) {
   const tree = window.__tree;
@@ -120,10 +121,11 @@ async function unshield(amount, stellarAddr) {
   setTimeout(rescan, 6000);
 }
 
-// ---- auditor panel ----
-async function runAudit(secret) {
+// ---- auditor panel ---- (ENFORCED disclosure: decrypt the in-circuit ciphertext)
+async function runAudit(auditorPriv) {
   const events = await fetchCommitEvents(CFG.poolId, CFG.startLedger);
-  const rows = auditAll(events, secret);
+  const auditMap = await fetchAuditEvents(CFG.poolId, CFG.startLedger);
+  const rows = auditEnforced(events, auditMap, auditorPriv);
   $("audit-out").innerHTML = rows.map((r) =>
     r.opaque ? `<tr><td>#${r.index}</td><td colspan=2>opaque</td></tr>`
       : `<tr><td>#${r.index}</td><td>${r.amount} USDC</td><td>${r.owner.slice(0, 16)}…</td></tr>`).join("");
@@ -148,8 +150,8 @@ function render() {
       </section>
       <section class="card">
         <h2>🔍 Auditor view</h2>
-        <p class="muted">Paste the auditor's viewing secret to reconstruct every note.</p>
-        <textarea id="audit-key" rows=2 placeholder="auditor viewing secret (hex)"></textarea>
+        <p class="muted">Paste the auditor's private key to reconstruct every note (disclosure is enforced in-circuit).</p>
+        <textarea id="audit-key" rows=2 placeholder="auditor private key"></textarea>
         <button id="b-audit">Reconstruct ledger</button>
         <table><thead><tr><th>leaf</th><th>amount</th><th>owner</th></tr></thead><tbody id="audit-out"></tbody></table>
       </section>
@@ -166,6 +168,7 @@ function render() {
 
 (async () => {
   await initPoseidon();
+  await initAuditor();
   ME = loadIdentity();
   CFG = await (await fetch("/api/config")).json();
   if (CFG.error) { document.getElementById("app").innerHTML = `<pre>${CFG.error}</pre>`; return; }

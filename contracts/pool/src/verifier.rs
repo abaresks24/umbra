@@ -67,3 +67,7 @@ pub fn nullifier(env: &Env, p: &Bytes, k: u32) -> BytesN<32> {
     BytesN::from_array(env, &arr::<32>(p, 4 + (3 + k) * FR_LEN))
 }
 pub fn commitment(env: &Env, p: &Bytes, k: u32) -> U256 { sig_u256(env, p, 5 + k) }
+// Enforced-auditor signals: pubkey (7,8), ephemeral R (9,10), cipher[out][j] (11 + out*3 + j).
+pub fn auditor_pub(env: &Env, p: &Bytes, k: u32) -> U256 { sig_u256(env, p, 7 + k) }
+pub fn auditor_r(env: &Env, p: &Bytes, k: u32) -> U256 { sig_u256(env, p, 9 + k) }
+pub fn auditor_cipher(env: &Env, p: &Bytes, out: u32, j: u32) -> U256 { sig_u256(env, p, 11 + out * 3 + j) }

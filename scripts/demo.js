@@ -12,7 +12,8 @@ const { initPoseidon, Keypair, Note } = require("../client/lib/crypto");
 const { buildTree } = require("../client/lib/tree");
 const { buildWitness, prove } = require("../client/lib/transaction");
 const { newViewingKeypair } = require("../client/lib/encryption");
-const { fetchCommitEvents, scanOwned, auditAll } = require("../client/lib/scan");
+const { initAuditor, newAuditorKey } = require("../client/lib/auditor");
+const { fetchCommitEvents, fetchAuditEvents, scanOwned, auditEnforced } = require("../client/lib/scan");
 const { proofToHex, publicToHex, vkToHex } = require("./bn254_snark_hex");
 
 const ROOT = path.join(__dirname, "..");
@@ -48,23 +49,25 @@ async function main() {
   line("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
   // identities: each party has a spend key (nullifiers) + a viewing key (scanning)
+  await initAuditor();
   const alice = { spend: new Keypair(), view: newViewingKeypair() };
   const bob = { spend: new Keypair(), view: newViewingKeypair() };
-  const auditor = newViewingKeypair();
-  line(`auditor viewing key (public): ${auditor.viewPub.slice(0, 24)}…\n`);
+  const auditor = newAuditorKey(); // Baby Jubjub — encryption ENFORCED in-circuit
+  line(`auditor pubkey (Baby Jubjub, pinned in the contract): ${auditor.pubX.slice(0, 22)}…\n`);
 
   // deploy + init pool, capture the ledger to scan from
   const server = new rpc.Server("https://soroban-testnet.stellar.org");
   const startLedger = (await server.getLatestLedger()).sequence - 1;
   CID = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
-  inv(`init --token ${USDC_SAC} --vk_bytes ${vkToHex(VK)}`);
+  inv(`init --token ${USDC_SAC} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
   line(`pool deployed: ${CID}\n`);
 
   const tree = buildTree([]);
-  const enc = (recipients) => ({ auditorViewPub: auditor.viewPub, senderViewPub: alice.view.viewPub, recipients });
+  const enc = (recipients) => ({ senderViewPub: alice.view.viewPub, recipients });
+  const auditorKey = { pubX: auditor.pubX, pubY: auditor.pubY };
 
   async function transact(label, params, extAmount, recipient) {
-    const r = buildWitness(params);
+    const r = buildWitness({ ...params, auditor: auditorKey });
     const { proof, publicSignals } = await prove(r.witness);
     const args =
       `transact --caller ${USER_ADDR} --proof ${proofToHex(proof)} --public ${publicToHex(publicSignals)}` +
@@ -117,14 +120,15 @@ async function main() {
   for (const n of bobNotes) line(`│  ✅ discovered an incoming note: ${n.amount} USDC at leaf #${n.index}`);
   line(`└─ Bob found ${bobNotes.length} note(s) totalling ${bobNotes.reduce((a, n) => a + n.amount, 0n)} USDC`);
 
-  // ── Auditor reconstructs everything ──
-  const audited = auditAll(events, auditor.viewSecret);
-  line("\n┌─ AUDITOR reconstructs with the VIEW KEY ───────────────────────");
+  // ── Auditor reconstructs everything — from the ENFORCED on-chain ciphertext ──
+  const auditMap = await fetchAuditEvents(CID, startLedger);
+  const audited = auditEnforced(events, auditMap, auditor.priv);
+  line("\n┌─ AUDITOR reconstructs (in-circuit ENFORCED disclosure) ─────────");
   for (const a of audited) {
-    if (a.opaque) line(`│  leaf #${a.index}  (not encrypted to auditor — opaque)`);
+    if (a.opaque) line(`│  leaf #${a.index}  (could not decrypt — should not happen)`);
     else line(`│  leaf #${a.index}  amount ${String(a.amount).padStart(4)} USDC   owner ${a.owner.slice(0, 14)}…`);
   }
-  line("└─ privacy ≠ opacity: the auditor sees all, the public sees nothing\n");
+  line("└─ ENFORCED: the proof itself guarantees every note is auditor-decryptable\n");
 
   line(`Explorer: https://stellar.expert/explorer/testnet/contract/${CID}`);
   fs.writeFileSync(path.join(B, "demo_pool_id.txt"), CID + "\n");

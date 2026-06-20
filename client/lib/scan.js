@@ -3,7 +3,8 @@
 // every note's amount + owner). This is how privacy ≠ opacity is demonstrated.
 const { rpc, scValToNative } = require("@stellar/stellar-sdk");
 const { tryDecrypt, unpackEnc } = require("./encryption");
-const { Note, Keypair, poseidon } = require("./crypto");
+const { Note, poseidon } = require("./crypto");
+const { decryptAuditOutput } = require("./auditor");
 
 const RPC_URL = process.env.STELLAR_RPC || "https://soroban-testnet.stellar.org";
 
@@ -52,21 +53,46 @@ function scanOwned(events, viewSecretHex, spendKeypair) {
   return owned;
 }
 
-// Auditor scan: reconstruct EVERY note from the auditor ciphertext.
-function auditAll(events, auditorSecretHex) {
+// Fetch the ENFORCED auditor ciphertext events: per leaf, (R, c0, c1, c2).
+async function fetchAuditEvents(contractId, startLedger) {
+  const server = new rpc.Server(RPC_URL);
+  const out = {};
+  let cursor;
+  for (;;) {
+    const req = { filters: [{ type: "contract", contractIds: [contractId] }], limit: 100 };
+    if (cursor) req.cursor = cursor;
+    else req.startLedger = Math.max(1, startLedger);
+    const page = await server.getEvents(req);
+    const evs = page.events || [];
+    for (const ev of evs) {
+      const topics = (ev.topic || []).map(scValToNative);
+      if (topics[0] !== "audit") continue;
+      const d = scValToNative(ev.value).map((x) => BigInt(x)); // [Rx, Ry, c0, c1, c2]
+      out[Number(topics[1])] = { R: [d[0], d[1]], cipher: [d[2], d[3], d[4]] };
+    }
+    if (evs.length < 100) break;
+    cursor = evs[evs.length - 1].pagingToken;
+  }
+  return out;
+}
+
+// ENFORCED auditor reconstruction: decrypt every note from the on-chain audit
+// ciphertext (proof-guaranteed to be present and well-formed). Recovers the
+// output slot by checking the decrypted note against its commitment.
+function auditEnforced(commitEvents, auditMap, auditorPriv) {
   const decoded = [];
-  for (const ev of events) {
-    const { auditorCt } = unpackEnc(ev.enc);
-    const pt = tryDecrypt(auditorSecretHex, auditorCt);
-    if (!pt) { decoded.push({ index: ev.index, commitment: ev.commitment, opaque: true }); continue; }
-    decoded.push({
-      index: ev.index,
-      commitment: ev.commitment,
-      amount: BigInt(pt.amount),
-      owner: pt.spendPub,
-    });
+  for (const ev of commitEvents) {
+    const a = auditMap[ev.index];
+    if (!a) { decoded.push({ index: ev.index, commitment: ev.commitment, opaque: true }); continue; }
+    let hit = null;
+    for (const t of [0, 1]) {
+      const m = decryptAuditOutput(a.R, a.cipher, t, auditorPriv); // [amount, pubkey, blinding]
+      if (poseidon(m).toString() === ev.commitment) { hit = m; break; }
+    }
+    if (hit) decoded.push({ index: ev.index, commitment: ev.commitment, amount: hit[0], owner: hit[1].toString() });
+    else decoded.push({ index: ev.index, commitment: ev.commitment, opaque: true });
   }
   return decoded;
 }
 
-module.exports = { fetchCommitEvents, scanOwned, auditAll, RPC_URL };
+module.exports = { fetchCommitEvents, fetchAuditEvents, scanOwned, auditEnforced, RPC_URL };

@@ -6,6 +6,7 @@ const { P, Note, toStr } = require("./crypto");
 const { merkleProof, dummyProof } = require("./tree");
 const { extDataHash } = require("./extdata");
 const { encryptOutput } = require("./encryption");
+const { encryptOutputsToAuditor, randomScalar } = require("./auditor");
 
 const N_INS = 2;
 const N_OUTS = 2;
@@ -35,7 +36,15 @@ function wrap(x) {
 // Each output is encrypted to its recipient's viewing key AND the auditor's key;
 // the resulting ciphertexts are bound into the proof via extDataHash. Dummy
 // (padded) outputs are encrypted to the sender's own viewing key.
-function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc }) {
+// Tests/flows that don't exercise auditing can set a default auditor key once.
+let _defaultAuditor = null;
+function setDefaultAuditor(a) { _defaultAuditor = a; }
+
+// `auditor` = { pubX, pubY } is the contract-pinned auditor BJJ pubkey. Each
+// output is ALSO encrypted to it inside the circuit (ENFORCED disclosure).
+function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, auditor }) {
+  auditor = auditor || _defaultAuditor;
+  if (!auditor) throw new Error("auditor pubkey { pubX, pubY } is required");
   const realIns = inputs.slice();
   const nRealOuts = outputs.length;
   const realOuts = outputs.slice();
@@ -49,7 +58,7 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc }) {
   if (enc) {
     encOut = realOuts.map((note, i) => {
       const recipientView = i < nRealOuts ? enc.recipients[i] : enc.senderViewPub;
-      return encryptOutput(note, recipientView, enc.auditorViewPub);
+      return encryptOutput(note, recipientView);
     });
   } else {
     encOut = [extData.encryptedOutput1 || "00", extData.encryptedOutput2 || "00"];
@@ -89,6 +98,14 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc }) {
     outBlinding.push(toStr(note.blinding));
   }
 
+  // ENFORCED auditor encryption (Baby Jubjub ElGamal) — must match transfer.circom.
+  const encRandom = randomScalar();
+  const msgs = realOuts.map((n) => [n.amount, n.pubkey, n.blinding]);
+  const aud = encryptOutputsToAuditor(msgs, auditor, encRandom);
+  const auditorPubKey = [String(auditor.pubX), String(auditor.pubY)];
+  const auditorR = aud.R.map(String);
+  const auditorCipher = aud.ciphers.map((row) => row.map(String));
+
   const witness = {
     root,
     publicAmount: pubAmt.toString(),
@@ -103,6 +120,10 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc }) {
     outAmount,
     outPubkey,
     outBlinding,
+    auditorPubKey,
+    auditorR,
+    auditorCipher,
+    encRandom: encRandom.toString(),
   };
 
   // Public signals in snarkjs order (matches the contract's parsing order).
@@ -112,10 +133,14 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc }) {
     witness.extDataHash,
     ...inputNullifier,
     ...outputCommitment,
+    ...auditorPubKey,
+    ...auditorR,
+    ...auditorCipher.flat(),
   ];
 
   return { witness, expectedPublic, outputs: realOuts, outputCommitment, inputNullifier,
-    enc1: extData.encryptedOutput1, enc2: extData.encryptedOutput2 };
+    enc1: extData.encryptedOutput1, enc2: extData.encryptedOutput2,
+    auditorR: aud.R, auditorCipher: aud.ciphers };
 }
 
 // Node: prove with on-disk artifacts. Browser: call snarkjs.groth16.fullProve
@@ -126,4 +151,4 @@ async function prove(witness, artifacts) {
   return { proof, publicSignals };
 }
 
-module.exports = { N_INS, N_OUTS, wrap, buildWitness, prove };
+module.exports = { N_INS, N_OUTS, wrap, buildWitness, prove, setDefaultAuditor };

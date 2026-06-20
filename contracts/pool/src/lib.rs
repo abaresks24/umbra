@@ -19,6 +19,8 @@ use soroban_sdk::crypto::bn254::Bn254Fr;
 pub enum Key {
     Vk,
     Token,
+    AuditorX,
+    AuditorY,
     Nullifier(BytesN<32>),
 }
 
@@ -47,11 +49,13 @@ pub struct ShieldedPool;
 impl ShieldedPool {
     /// One-time setup: store the USDC token (SAC) address and the transfer VK,
     /// and initialise the Merkle tree.
-    pub fn init(env: Env, token: Address, vk_bytes: Bytes) {
+    pub fn init(env: Env, token: Address, vk_bytes: Bytes, auditor_x: U256, auditor_y: U256) {
         let s = env.storage().instance();
         assert!(!s.has(&Key::Vk), "already initialised");
         s.set(&Key::Token, &token);
         s.set(&Key::Vk, &vk_bytes);
+        s.set(&Key::AuditorX, &auditor_x);
+        s.set(&Key::AuditorY, &auditor_y);
         merkle::init(&env);
     }
 
@@ -87,6 +91,13 @@ impl ShieldedPool {
         let expected = expected_public_amount(&env, ext_amount - fee);
         assert!(expected == verifier::public_amount(&env, &public), "public amount mismatch");
 
+        // 4b) ENFORCED auditor disclosure: the proof must encrypt every output to
+        // THE pinned auditor key. Validators reject any proof that does not.
+        let ax: U256 = s.get(&Key::AuditorX).unwrap();
+        let ay: U256 = s.get(&Key::AuditorY).unwrap();
+        assert!(verifier::auditor_pub(&env, &public, 0) == ax, "wrong auditor key");
+        assert!(verifier::auditor_pub(&env, &public, 1) == ay, "wrong auditor key");
+
         // 5) nullifiers must be unspent; mark them spent (prevents double-spend)
         let nf0 = verifier::nullifier(&env, &public, 0);
         let nf1 = verifier::nullifier(&env, &public, 1);
@@ -111,10 +122,20 @@ impl ShieldedPool {
             usdc.transfer(&pool, &recipient, &(-ext_amount)); // unshield out
         }
 
-        // 8) events: one NewCommitment per output (with ciphertext) + the nullifiers
+        // 8) events: NewCommitment per output (recipient ciphertext) + nullifiers
         env.events().publish((symbol_short!("commit"), i0), (c0, enc1));
         env.events().publish((symbol_short!("commit"), i1), (c1, enc2));
         env.events().publish((symbol_short!("nullify"),), (nf0, nf1));
+
+        // audit events: the ENFORCED auditor ciphertext per output (R, c0, c1, c2)
+        let rx = verifier::auditor_r(&env, &public, 0);
+        let ry = verifier::auditor_r(&env, &public, 1);
+        env.events().publish((symbol_short!("audit"), i0),
+            (rx.clone(), ry.clone(), verifier::auditor_cipher(&env, &public, 0, 0),
+             verifier::auditor_cipher(&env, &public, 0, 1), verifier::auditor_cipher(&env, &public, 0, 2)));
+        env.events().publish((symbol_short!("audit"), i1),
+            (rx, ry, verifier::auditor_cipher(&env, &public, 1, 0),
+             verifier::auditor_cipher(&env, &public, 1, 1), verifier::auditor_cipher(&env, &public, 1, 2)));
     }
 
     // --- views ---

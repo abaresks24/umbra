@@ -60,13 +60,15 @@ Hackathon: *Stellar Hacks: Real-World ZK* · deadline **June 29, 12:00 PST** · 
 - [x] **Budget measured:** each `transact` ≈ **72M / 100M** instructions at depth 8 — comfortable. Latest pool `CBK3S3D777EUJXUPIOIOIN3XNFM4E4GFV76P62VIE3MGXY4UL2PIVOP6`
 
 **Repro:** `./scripts/setup_usdc.sh` (one-time) → `node test/04_pool_lifecycle.js`.
-### Phase 3 — Compliance + web wallet 🟢 COMPLETE
-- [x] Note encryption (`client/lib/encryption.js`): each output encrypted to the recipient's viewing key AND a fixed auditor key (NaCl box / Curve25519), packed into the output `enc` blob, bound by extDataHash
-- [x] Event scanning (`client/lib/scan.js`): recipient discovers own notes; auditor reconstructs all amounts+owners
-- [x] 🟢 **Gate (`scripts/demo.js`, verified on testnet):** Alice shields→sends 60 privately to Bob→unshields; chain shows 6 opaque commitments; **Bob scans → finds his 60 USDC note**; **auditor reconstructs every amount+owner**
-- [x] Encryption unit test (`test/05_encryption.js`): recipient + auditor decrypt, stranger learns nothing
-- [x] Web wallet (`web/`): Vite app with **in-browser snarkjs proving** (witness never leaves device), scanning, auditor panel; thin relayer (`web/server.js`) submits public data only. `npm run web:build` passes; relayer config + input-validation tested
-- Compliance is the **voluntary/encryption-based** variant (auditor ct produced by honest client, not in-circuit). Strong in-circuit enforcement = documented future work (README §limitations)
+### Phase 3 — Compliance + web wallet 🟢 COMPLETE (upgraded to ENFORCED)
+- [x] Recipient discovery: each output encrypted to the recipient's viewing key (NaCl box), bound by extDataHash (`client/lib/encryption.js`)
+- [x] 🔒 **ENFORCED auditor disclosure (strong variant):** each output is encrypted to a fixed auditor key via **Baby Jubjub ElGamal + Poseidon, constrained IN-CIRCUIT** (`circuits/elgamal.circom` → integrated into `transfer.circom`). The contract **pins the auditor pubkey** and rejects any proof not encrypted to it. Cryptographically impossible to mint a note the auditor can't decrypt.
+- [x] De-risk spike (`test/06_elgamal_match.js`): in-circuit BJJ ElGamal == off-chain, byte-for-byte; auditor decrypts back; wrong key fails
+- [x] Offline integration (`test/07_enforced_audit.js`): auditor reconstructs note from PUBLIC SIGNALS; recovered note recomputes to the on-chain commitment
+- [x] 🟢 **On-chain enforcement (`test/08_enforcement.js`):** proof to pinned auditor A accepted, proof to a different auditor B **REJECTED on-chain**
+- [x] 🟢 **Gate (`scripts/demo.js`, testnet):** chain shows opaque commitments; **Bob scans → finds his 60 USDC note**; **auditor reconstructs every note from the ENFORCED on-chain ciphertext** (`audit` events)
+- [x] Circuit now ~25k constraints (still fits power-15 ptau); each `transact` ≈ **85M / 100M** instructions (was 72M; +13M from 10 extra public inputs)
+- [x] Web wallet (`web/`): in-browser snarkjs proving, scanning, enforced-auditor panel; `npm run web:build` passes; relayer tested
 
 ### Phase 4 — Demo 🟢 COMPLETE
 - [x] `scripts/demo.js` — the split-screen narrative (chain opaque vs auditor reconstruction), runs reliably end-to-end on testnet

@@ -6,6 +6,8 @@ const path = require("path");
 const { initPoseidon, Keypair, Note } = require("../client/lib/crypto");
 const { buildTree } = require("../client/lib/tree");
 const { buildWitness, prove } = require("../client/lib/transaction");
+const { setDefaultAuditor } = require("../client/lib/transaction");
+const { initAuditor, newAuditorKey } = require("../client/lib/auditor");
 const { deployVerifier, setVk, verifyOnChain } = require("../client/lib/onchain");
 
 const B = path.join(__dirname, "../circuits/build");
@@ -13,6 +15,8 @@ const VK = JSON.parse(fs.readFileSync(path.join(B, "transfer_vk.json")));
 
 (async () => {
   await initPoseidon();
+  await initAuditor();
+  setDefaultAuditor(newAuditorKey());
   console.log("== Phase 1 on-chain lifecycle ==\n");
 
   console.log("Deploying transfer verifier + storing VK on testnet...");
