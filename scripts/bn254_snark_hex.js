@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // snarkjs (bn128/BN254) JSON -> Soroban native BN254 byte blobs (hex).
 //
 // Byte layout (all big-endian) — must match contracts/groth16-verifier/src/lib.rs:

@@ -5,14 +5,29 @@
   "type": "commonjs",
   "description": "Shielded USDC wallet on Stellar — off-chain ZK tooling + CLI",
   "scripts": {
-    "build:circuit": "bash circuits/build_transfer.sh"
+    "build:circuit": "bash circuits/build_transfer.sh",
+    "test": "node test/05_encryption.js && node test/01_local_lifecycle.js && node test/02_negative.js",
+    "demo": "node scripts/demo.js",
+    "web:init": "node scripts/init_web.js",
+    "web:server": "node web/server.js",
+    "web:dev": "vite --config web/vite.config.js",
+    "web:build": "vite build --config web/vite.config.js"
   },
   "dependencies": {
+    "@stellar/stellar-sdk": "^13.3.0",
     "circomlib": "^2.0.5",
     "circomlibjs": "^0.1.7",
     "ffjavascript": "^0.3.1",
     "fixed-merkle-tree": "^0.7.3",
     "js-sha3": "^0.9.3",
-    "snarkjs": "^0.7.6"
+    "snarkjs": "^0.7.6",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1"
+  },
+  "devDependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "vite": "^5.4.11",
+    "vite-plugin-node-polyfills": "^0.22.0"
   }
 }

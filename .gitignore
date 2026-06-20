@@ -9,3 +9,6 @@ build/
 *.wasm
 identity.txt
 .env
+web/dist/
+web/public/
+dist/

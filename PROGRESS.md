@@ -60,9 +60,25 @@ Hackathon: *Stellar Hacks: Real-World ZK* · deadline **June 29, 12:00 PST** · 
 - [x] **Budget measured:** each `transact` ≈ **72M / 100M** instructions at depth 8 — comfortable. Latest pool `CBK3S3D777EUJXUPIOIOIN3XNFM4E4GFV76P62VIE3MGXY4UL2PIVOP6`
 
 **Repro:** `./scripts/setup_usdc.sh` (one-time) → `node test/04_pool_lifecycle.js`.
-### Phase 3 — View-key compliance + web wallet 🔴
-### Phase 4 — Polish + demo 🔴
-### Phase 5 — Submission 🔴
+### Phase 3 — Compliance + web wallet 🟢 COMPLETE
+- [x] Note encryption (`client/lib/encryption.js`): each output encrypted to the recipient's viewing key AND a fixed auditor key (NaCl box / Curve25519), packed into the output `enc` blob, bound by extDataHash
+- [x] Event scanning (`client/lib/scan.js`): recipient discovers own notes; auditor reconstructs all amounts+owners
+- [x] 🟢 **Gate (`scripts/demo.js`, verified on testnet):** Alice shields→sends 60 privately to Bob→unshields; chain shows 6 opaque commitments; **Bob scans → finds his 60 USDC note**; **auditor reconstructs every amount+owner**
+- [x] Encryption unit test (`test/05_encryption.js`): recipient + auditor decrypt, stranger learns nothing
+- [x] Web wallet (`web/`): Vite app with **in-browser snarkjs proving** (witness never leaves device), scanning, auditor panel; thin relayer (`web/server.js`) submits public data only. `npm run web:build` passes; relayer config + input-validation tested
+- Compliance is the **voluntary/encryption-based** variant (auditor ct produced by honest client, not in-circuit). Strong in-circuit enforcement = documented future work (README §limitations)
+
+### Phase 4 — Demo 🟢 COMPLETE
+- [x] `scripts/demo.js` — the split-screen narrative (chain opaque vs auditor reconstruction), runs reliably end-to-end on testnet
+- [x] `docs/DEMO_SCRIPT.md` — 2–3 min video script with beats + honesty slide
+
+### Phase 5 — Submission 🟢 COMPLETE
+- [x] `README.md` — architecture, what the ZK proves / does NOT, honest limitations, run instructions, deployed addresses
+- [x] `web/README.md` — web wallet architecture + run
+- [x] This `PROGRESS.md` — full build log with measured costs
+
+## Status: all phases green. Submittable.
+Test suite: `node test/05_encryption.js`, `(cd contracts/poseidon-match && cargo test)`, `node test/01_local_lifecycle.js`, `node scripts/lifecycle.js`, `node test/02_negative.js`, `node test/04_pool_lifecycle.js`, `node scripts/demo.js`.
 
 ---
 
