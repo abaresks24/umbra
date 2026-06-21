@@ -76,6 +76,38 @@ async function fetchAuditEvents(contractId, startLedger) {
   return out;
 }
 
+// 32-byte big-endian hex of a nullifier field element (matches the on-chain
+// BytesN<32> emitted in `nullify` events).
+function nullifierHex(big) {
+  return BigInt(big).toString(16).padStart(64, "0");
+}
+
+// Authoritative spent-set from the chain: collect every nullifier the contract
+// has marked spent (emitted in `nullify` events). Lets the wallet compute the
+// real balance on ANY device — no local bookkeeping needed.
+async function fetchSpentNullifiers(contractId, startLedger) {
+  const server = new rpc.Server(RPC_URL);
+  const set = new Set();
+  let cursor;
+  for (;;) {
+    const req = { filters: [{ type: "contract", contractIds: [contractId] }], limit: 100 };
+    if (cursor) req.cursor = cursor;
+    else req.startLedger = Math.max(1, startLedger);
+    const page = await server.getEvents(req);
+    const evs = page.events || [];
+    for (const ev of evs) {
+      const topics = (ev.topic || []).map(scValToNative);
+      if (topics[0] !== "nullify") continue;
+      const [a, b] = scValToNative(ev.value); // two 32-byte BytesN
+      set.add(Buffer.from(a).toString("hex"));
+      set.add(Buffer.from(b).toString("hex"));
+    }
+    if (evs.length < 100) break;
+    cursor = evs[evs.length - 1].pagingToken;
+  }
+  return set;
+}
+
 // ENFORCED auditor reconstruction: decrypt every note from the on-chain audit
 // ciphertext (proof-guaranteed to be present and well-formed). Recovers the
 // output slot by checking the decrypted note against its commitment.
@@ -96,4 +128,4 @@ function auditEnforced(commitEvents, auditMap, auditorPriv) {
   return decoded;
 }
 
-module.exports = { fetchCommitEvents, fetchAuditEvents, scanOwned, auditEnforced, RPC_URL };
+module.exports = { fetchCommitEvents, fetchAuditEvents, fetchSpentNullifiers, nullifierHex, scanOwned, auditEnforced, RPC_URL };

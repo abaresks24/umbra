@@ -38,6 +38,7 @@ Open http://localhost:5173.
 - The relayer signs with a demo testnet account; a production wallet would sign
   in-browser (e.g. Freighter). Privacy is unaffected — the relayer never sees the
   witness.
-- Spent-note tracking in the browser is a local approximation (a real wallet
-  derives it from on-chain nullifiers). Re-scan reflects on-chain truth.
+- Spent-note tracking is derived ON-CHAIN from `nullify` events, so balances are
+  correct on any device (verified by `test/10`). localStorage is only an
+  optimistic hint to cover RPC indexing lag right after a spend.
 - The verified, click-free demo is `node scripts/demo.js` at the repo root.

@@ -7,7 +7,7 @@ import { buildTree } from "../../client/lib/tree";
 import { buildWitness } from "../../client/lib/transaction";
 import { initAuditor } from "../../client/lib/auditor";
 import { randomSeed, deriveIdentity, decodeAddress } from "../../client/lib/identity";
-import { fetchCommitEvents, fetchAuditEvents, scanOwned, auditEnforced } from "../../client/lib/scan";
+import { fetchCommitEvents, fetchAuditEvents, fetchSpentNullifiers, nullifierHex, scanOwned, auditEnforced } from "../../client/lib/scan";
 import { proofToHex, publicToHex } from "../../scripts/bn254_snark_hex";
 
 const WASM_URL = "/transfer.wasm", ZKEY_URL = "/transfer_final.zkey";
@@ -35,10 +35,17 @@ async function rescan() {
   if (!ME) return;
   say("scanning chain…");
   try {
-    const events = await fetchCommitEvents(CFG.poolId, CFG.startLedger);
+    const [events, onchainSpent] = await Promise.all([
+      fetchCommitEvents(CFG.poolId, CFG.startLedger),
+      fetchSpentNullifiers(CFG.poolId, CFG.startLedger), // authoritative spent-set
+    ]);
     window.__tree = buildTree(events.sort((a, b) => a.index - b.index).map((e) => e.commitment));
-    const spent = new Set(JSON.parse(localStorage.getItem(spentKey()) || "[]"));
-    notes = scanOwned(events, ME.viewSecret, ME.spend).filter((n) => !spent.has(n.note.nullifier(n.index).toString()));
+    // local set is only an optimistic hint to cover RPC indexing lag right after a spend
+    const localSpent = new Set(JSON.parse(localStorage.getItem(spentKey()) || "[]"));
+    notes = scanOwned(events, ME.viewSecret, ME.spend).filter((n) => {
+      const h = nullifierHex(n.note.nullifier(n.index));
+      return !onchainSpent.has(h) && !localSpent.has(h);
+    });
     say(`found ${notes.length} note(s)`);
   } catch (e) { say("scan error: " + (e.message || e)); }
   render();
@@ -48,7 +55,7 @@ function scheduleRescans() { [6000, 14000, 25000, 40000].forEach((ms) => setTime
 const balanceOf = (id) => notes.filter((n) => Number(n.assetId) === Number(id)).reduce((a, n) => a + n.amount, 0n);
 function markSpent(ns) {
   const s = new Set(JSON.parse(localStorage.getItem(spentKey()) || "[]"));
-  ns.forEach((n) => s.add(n.note.nullifier(n.index).toString()));
+  ns.forEach((n) => s.add(nullifierHex(n.note.nullifier(n.index))));
   localStorage.setItem(spentKey(), JSON.stringify([...s]));
 }
 function selectInputs(amount, assetId) {
