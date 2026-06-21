@@ -8,6 +8,7 @@ export default defineConfig({
   root: __dirname,
   plugins: [nodePolyfills({ globals: { Buffer: true, process: true, global: true }, protocolImports: true })],
   server: { port: 5173, proxy: { "/api": "http://localhost:8787" } },
+  preview: { port: 5173, proxy: { "/api": "http://localhost:8787" } },
   build: {
     target: "es2020",
     commonjsOptions: { include: [/client\/lib/, /scripts/, /node_modules/], transformMixedEsModules: true },

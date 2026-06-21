@@ -11,7 +11,8 @@
     "web:init": "node scripts/init_web.js",
     "web:server": "node web/server.js",
     "web:dev": "vite --config web/vite.config.js",
-    "web:build": "vite build --config web/vite.config.js"
+    "web:build": "vite build --config web/vite.config.js",
+    "web:smoke": "node web/smoke.cjs"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^13.3.0",
@@ -27,6 +28,7 @@
   "devDependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "puppeteer-core": "^23.10.4",
     "vite": "^5.4.11",
     "vite-plugin-node-polyfills": "^0.22.0"
   }

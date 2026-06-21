@@ -48,15 +48,3 @@ function publicToHex(signals) {
 }
 
 module.exports = { proofToHex, vkToHex, publicToHex };
-
-if (require.main === module) {
-  const fs = require("fs");
-  const [kind, file] = process.argv.slice(2);
-  const json = JSON.parse(fs.readFileSync(file, "utf8"));
-  let out;
-  if (kind === "vk") out = vkToHex(json);
-  else if (kind === "proof") out = proofToHex(json);
-  else if (kind === "public") out = publicToHex(json);
-  else { console.error("usage: bn254_snark_hex.js <vk|proof|public> <file.json>"); process.exit(1); }
-  process.stdout.write(out + "\n");
-}
