@@ -25,7 +25,14 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
 
   console.log("deploying pool…");
   const poolId = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
-  sh(`stellar contract invoke --id ${poolId} --source shield --network testnet -- init --token ${e.USDC_SAC} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
+  const ip = (a) => sh(`stellar contract invoke --id ${poolId} --source shield --network testnet -- ${a}`);
+  ip(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
+
+  // register the assets the pool supports
+  const assets = [{ id: 0, symbol: "USDC", sac: e.USDC_SAC }];
+  if (e.WETH_SAC) assets.push({ id: 1, symbol: "WETH", sac: e.WETH_SAC });
+  for (const a of assets) ip(`register_asset --asset_id ${a.id} --token ${a.sac}`);
+  console.log("registered assets:", assets.map((a) => `${a.id}=${a.symbol}`).join(", "));
 
   // copy browser-served circuit artifacts
   fs.mkdirSync(path.join(ROOT, "web/public"), { recursive: true });
@@ -34,7 +41,7 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
 
   const config = {
     poolId, relayer: "shield",
-    sac: e.USDC_SAC, userAddr: e.USER_ADDR, recipAddr: e.RECIP_ADDR,
+    assets, userAddr: e.USER_ADDR, recipAddr: e.RECIP_ADDR,
     auditorPubX: auditor.pubX, auditorPubY: auditor.pubY, startLedger,
     rpc: "https://soroban-testnet.stellar.org",
   };

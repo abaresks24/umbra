@@ -1,24 +1,21 @@
-// Headless smoke test: load the built web wallet and assert it renders with no
-// runtime errors and the action buttons are present. Catches browser-only
-// regressions (e.g. a stray CommonJS `require` surviving into the bundle).
-// Prereqs: relayer (npm run web:server) + a server on :5173 (vite preview).
 const puppeteer = require("puppeteer-core");
 const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 (async () => {
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: "new", args: ["--no-sandbox"] });
-  const page = await browser.newPage();
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("http://localhost:5173/", { waitUntil: "networkidle2", timeout: 45000 });
+  const b = await puppeteer.launch({ executablePath: CHROME, headless: "new", args: ["--no-sandbox"] });
+  const p = await b.newPage(); const errs = [];
+  p.on("pageerror", (e) => errs.push(e.message));
+  await p.goto("http://localhost:5173/", { waitUntil: "networkidle2", timeout: 45000 });
   await new Promise((r) => setTimeout(r, 8000));
-  const ok = await page.evaluate(() => ({
-    rendered: (document.getElementById("app")?.innerHTML?.length || 0) > 200,
-    shield: !!document.getElementById("b-shield"),
-    send: !!document.getElementById("b-send"),
-    audit: !!document.getElementById("b-audit"),
-  }));
-  await browser.close();
-  const pass = errors.length === 0 && ok.rendered && ok.shield && ok.send && ok.audit;
-  console.log(pass ? "🎉 web smoke: PASS" : "❌ web smoke: FAIL", JSON.stringify(ok), errors.length ? "errors=" + errors.join("; ") : "");
+  const landing = await p.evaluate(() => ({ create: !!document.getElementById("go-create"), connect: !!document.getElementById("go-connect") }));
+  await p.evaluate(() => document.getElementById("go-create")?.click());
+  await new Promise((r) => setTimeout(r, 500));
+  const seedShown = await p.evaluate(() => (document.getElementById("seedval")?.textContent || "").length);
+  await p.evaluate(() => { const c = document.getElementById("saved"); if (c) { c.checked = true; c.dispatchEvent(new Event("change")); } });
+  await p.evaluate(() => document.getElementById("open")?.click());
+  await new Promise((r) => setTimeout(r, 2000));
+  const wallet = await p.evaluate(() => ({ go: !!document.getElementById("f-go"), asset: !!document.getElementById("f-asset"), audit: !!document.getElementById("b-audit"), balances: document.querySelectorAll(".asset-card").length }));
+  await b.close();
+  const pass = !errs.length && landing.create && landing.connect && seedShown >= 32 && wallet.go && wallet.balances >= 2;
+  console.log(pass ? "🎉 web smoke: PASS" : "❌ web smoke: FAIL", JSON.stringify({ landing, seedShown, wallet }), errs.length ? "errors=" + errs.join("; ") : "");
   process.exit(pass ? 0 : 1);
 })().catch((e) => { console.error("smoke error:", e.message); process.exit(1); });
