@@ -67,6 +67,8 @@ select { -webkit-appearance: none; appearance: none; }
 .balances { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .asset-card { background: linear-gradient(180deg, var(--card), var(--card2)); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
 .asset-top { display: flex; align-items: center; gap: 8px; color: var(--mut); font-size: 14px; }
+.asset-top .merge { margin-left: auto; background: #ffffff12; border: 1px solid var(--line); color: var(--mut); border-radius: 8px; padding: 2px 7px; font-size: 11px; cursor: pointer; }
+.asset-top .merge:hover { color: var(--ink); background: #ffffff1e; }
 .asset-ico { width: 26px; height: 26px; border-radius: 50%; background: var(--grad); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 13px; }
 .asset-bal { font-size: 30px; font-weight: 800; margin-top: 8px; letter-spacing: -.5px; }
 .asset-bal small { font-size: 12px; color: var(--mut); font-weight: 500; margin-left: 6px; }

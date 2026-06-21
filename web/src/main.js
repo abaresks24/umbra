@@ -18,6 +18,21 @@ let CFG, ME = null, notes = [], log = [], busy = false;
 let screen = "landing", tmpSeed = "", action = "shield", asset = 0;
 
 const assetById = (id) => (CFG.assets || []).find((a) => Number(a.id) === Number(id));
+const decOf = (id) => assetById(id)?.decimals ?? 7;
+// human "1.5" <-> raw base-unit BigInt, per the asset's decimals
+function toRaw(human, d) {
+  const s = String(human).trim();
+  if (s === "" || s === "." || !/^\d*\.?\d*$/.test(s)) throw new Error("invalid amount");
+  const [int, frac = ""] = s.split(".");
+  if (frac.length > d) throw new Error(`max ${d} decimals`);
+  return BigInt((int || "0") + frac.padEnd(d, "0"));
+}
+function toHuman(raw, d) {
+  const s = BigInt(raw).toString().padStart(d + 1, "0");
+  const int = s.slice(0, s.length - d), frac = d ? s.slice(s.length - d).replace(/0+$/, "") : "";
+  return frac ? `${int}.${frac}` : int;
+}
+const noteCount = (id) => notes.filter((n) => Number(n.assetId) === Number(id)).length;
 const say = (m) => { log.unshift(`${new Date().toLocaleTimeString().slice(0, 8)}  ${m}`); render(); };
 const short = (s, n = 6) => s.length > 2 * n + 3 ? `${s.slice(0, n)}…${s.slice(-n)}` : s;
 
@@ -117,13 +132,28 @@ async function doUnshield(amount, assetId, stellarAddr) {
   markSpent(chosen); scheduleRescans();
 }
 
+// Merge the two smallest notes of an asset into one (anti-dust). The pool is
+// 2-in/2-out, so this halves note count per call; repeat to fully consolidate.
+async function doConsolidate(assetId) {
+  const mine = notes.filter((n) => Number(n.assetId) === Number(assetId)).sort((a, b) => (a.amount < b.amount ? -1 : 1));
+  if (mine.length < 2) throw new Error("nothing to merge");
+  const [n1, n2] = mine;
+  const merged = new Note({ amount: n1.amount + n2.amount, assetId, owner: ME.spend });
+  await proveAndSubmit({
+    tree: window.__tree, inputs: [{ note: n1.note, index: n1.index }, { note: n2.note, index: n2.index }],
+    outputs: [merged], publicAmount: 0n,
+    extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([ME.viewPub]),
+  }, { recipient: CFG.userAddr, extAmount: 0, assetId });
+  markSpent([n1, n2]); scheduleRescans();
+}
+
 async function runAudit(priv) {
   const events = await fetchCommitEvents(CFG.poolId, CFG.startLedger);
   const auditMap = await fetchAuditEvents(CFG.poolId, CFG.startLedger);
   const rows = auditEnforced(events, auditMap, priv);
   $("audit-out").innerHTML = rows.map((r) => r.opaque
     ? `<tr><td>#${r.index}</td><td colspan=2 class="mut">opaque</td></tr>`
-    : `<tr><td>#${r.index}</td><td><b>${r.amount}</b> ${assetById(r.assetId)?.symbol || `asset ${r.assetId}`}</td><td class="mut">${short(r.owner, 8)}</td></tr>`).join("");
+    : `<tr><td>#${r.index}</td><td><b>${toHuman(r.amount, decOf(r.assetId))}</b> ${assetById(r.assetId)?.symbol || `asset ${r.assetId}`}</td><td class="mut">${short(r.owner, 8)}</td></tr>`).join("");
 }
 
 // ---------- UI ----------
@@ -195,8 +225,9 @@ function render() {
     <div class="wrap">
       <section class="balances">
         ${assets.map((a) => `<div class="asset-card">
-          <div class="asset-top"><span class="asset-ico">${a.symbol[0]}</span><span>${a.symbol}</span></div>
-          <div class="asset-bal">${balanceOf(a.id)}<small>shielded</small></div>
+          <div class="asset-top"><span class="asset-ico">${a.symbol[0]}</span><span>${a.symbol}</span>
+            ${noteCount(a.id) > 1 ? `<button class="merge" data-merge="${a.id}" title="merge ${noteCount(a.id)} notes into fewer">⤵ ${noteCount(a.id)}</button>` : ""}</div>
+          <div class="asset-bal">${toHuman(balanceOf(a.id), a.decimals)}<small>shielded</small></div>
         </div>`).join("")}
       </section>
 
@@ -233,10 +264,15 @@ function render() {
   $("copyaddr").onclick = () => { navigator.clipboard.writeText(ME.address); $("copyaddr").textContent = "copied!"; setTimeout(render, 800); };
   app.querySelectorAll(".seg button").forEach((b) => b.onclick = () => { action = b.dataset.act; render(); });
   $("f-asset").onchange = (e) => { asset = Number(e.target.value); };
+  app.querySelectorAll(".merge").forEach((btn) => btn.onclick = async () => {
+    if (busy) return; busy = true; render();
+    try { await rescan(); await doConsolidate(Number(btn.dataset.merge)); } catch (e) { say("❌ " + (e.message || e)); }
+    finally { busy = false; render(); }
+  });
   $("f-go").onclick = async () => {
     // capture form values BEFORE render() (which rebuilds the inputs)
-    let amt; try { amt = BigInt($("f-amt").value || "0"); } catch { amt = 0n; }
     const a = Number($("f-asset").value);
+    let amt; try { amt = toRaw($("f-amt").value || "0", decOf(a)); } catch (e) { say("❌ " + e.message); return; }
     const addr = $("f-addr") ? $("f-addr").value.trim() : "";
     if (amt <= 0n) { say("❌ enter an amount"); return; }
     if (action !== "shield" && !addr) { say("❌ enter a recipient address"); return; }

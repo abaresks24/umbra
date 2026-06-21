@@ -28,9 +28,13 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
   const ip = (a) => sh(`stellar contract invoke --id ${poolId} --source shield --network testnet -- ${a}`);
   ip(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
 
-  // register the assets the pool supports
-  const assets = [{ id: 0, symbol: "USDC", sac: e.USDC_SAC }];
-  if (e.WETH_SAC) assets.push({ id: 1, symbol: "WETH", sac: e.WETH_SAC });
+  // register the assets the pool supports (query each token's decimals)
+  const decimalsOf = (sac) => {
+    try { return Number(sh(`stellar contract invoke --id ${sac} --source shield --network testnet -- decimals`).replace(/"/g, "")); }
+    catch { return 7; } // classic Stellar assets default to 7
+  };
+  const assets = [{ id: 0, symbol: "USDC", sac: e.USDC_SAC, decimals: decimalsOf(e.USDC_SAC) }];
+  if (e.WETH_SAC) assets.push({ id: 1, symbol: "WETH", sac: e.WETH_SAC, decimals: decimalsOf(e.WETH_SAC) });
   for (const a of assets) ip(`register_asset --asset_id ${a.id} --token ${a.sac}`);
   console.log("registered assets:", assets.map((a) => `${a.id}=${a.symbol}`).join(", "));
 
