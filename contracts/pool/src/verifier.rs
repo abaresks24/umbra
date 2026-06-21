@@ -54,8 +54,9 @@ pub fn verify(env: &Env, vkb: &Bytes, proof: &Bytes, public: &Bytes) -> bool {
     bn.pairing_check(vec![env, -a, alpha, vk_x, c], vec![env, b, beta, gamma, delta])
 }
 
-// --- typed accessors for the 7 transfer public signals ---
-// order: root, publicAmount, extDataHash, nullifier0, nullifier1, commitment0, commitment1
+// --- typed accessors for the 18 transfer public signals ---
+// order: root, publicAmount, extDataHash, assetId, nullifier[2], commitment[2],
+//        auditorPubKey[2], auditorR[2], auditorCipher[2][3]
 fn sig_u256(env: &Env, public: &Bytes, i: u32) -> U256 {
     let off = 4 + i * FR_LEN;
     U256::from_be_bytes(env, &public.slice(off..off + FR_LEN))
@@ -63,11 +64,12 @@ fn sig_u256(env: &Env, public: &Bytes, i: u32) -> U256 {
 pub fn root(env: &Env, p: &Bytes) -> U256 { sig_u256(env, p, 0) }
 pub fn public_amount(env: &Env, p: &Bytes) -> U256 { sig_u256(env, p, 1) }
 pub fn ext_data_hash(env: &Env, p: &Bytes) -> U256 { sig_u256(env, p, 2) }
+pub fn asset_id(env: &Env, p: &Bytes) -> U256 { sig_u256(env, p, 3) }
 pub fn nullifier(env: &Env, p: &Bytes, k: u32) -> BytesN<32> {
-    BytesN::from_array(env, &arr::<32>(p, 4 + (3 + k) * FR_LEN))
+    BytesN::from_array(env, &arr::<32>(p, 4 + (4 + k) * FR_LEN))
 }
-pub fn commitment(env: &Env, p: &Bytes, k: u32) -> U256 { sig_u256(env, p, 5 + k) }
-// Enforced-auditor signals: pubkey (7,8), ephemeral R (9,10), cipher[out][j] (11 + out*3 + j).
-pub fn auditor_pub(env: &Env, p: &Bytes, k: u32) -> U256 { sig_u256(env, p, 7 + k) }
-pub fn auditor_r(env: &Env, p: &Bytes, k: u32) -> U256 { sig_u256(env, p, 9 + k) }
-pub fn auditor_cipher(env: &Env, p: &Bytes, out: u32, j: u32) -> U256 { sig_u256(env, p, 11 + out * 3 + j) }
+pub fn commitment(env: &Env, p: &Bytes, k: u32) -> U256 { sig_u256(env, p, 6 + k) }
+// Enforced-auditor signals: pubkey (8,9), ephemeral R (10,11), cipher[out][j] (12 + out*3 + j).
+pub fn auditor_pub(env: &Env, p: &Bytes, k: u32) -> U256 { sig_u256(env, p, 8 + k) }
+pub fn auditor_r(env: &Env, p: &Bytes, k: u32) -> U256 { sig_u256(env, p, 10 + k) }
+pub fn auditor_cipher(env: &Env, p: &Bytes, out: u32, j: u32) -> U256 { sig_u256(env, p, 12 + out * 3 + j) }

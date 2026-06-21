@@ -18,9 +18,10 @@ use soroban_sdk::crypto::bn254::Bn254Fr;
 #[derive(Clone)]
 pub enum Key {
     Vk,
-    Token,
+    Admin,
     AuditorX,
     AuditorY,
+    Asset(U256),         // assetId -> token (SAC) address
     Nullifier(BytesN<32>),
 }
 
@@ -49,14 +50,26 @@ pub struct ShieldedPool;
 impl ShieldedPool {
     /// One-time setup: store the USDC token (SAC) address and the transfer VK,
     /// and initialise the Merkle tree.
-    pub fn init(env: Env, token: Address, vk_bytes: Bytes, auditor_x: U256, auditor_y: U256) {
+    pub fn init(env: Env, admin: Address, vk_bytes: Bytes, auditor_x: U256, auditor_y: U256) {
         let s = env.storage().instance();
         assert!(!s.has(&Key::Vk), "already initialised");
-        s.set(&Key::Token, &token);
+        s.set(&Key::Admin, &admin);
         s.set(&Key::Vk, &vk_bytes);
         s.set(&Key::AuditorX, &auditor_x);
         s.set(&Key::AuditorY, &auditor_y);
         merkle::init(&env);
+    }
+
+    /// Register (or update) the token backing an asset id. Admin only.
+    pub fn register_asset(env: Env, asset_id: U256, token: Address) {
+        let s = env.storage().instance();
+        let admin: Address = s.get(&Key::Admin).expect("not initialised");
+        admin.require_auth();
+        s.set(&Key::Asset(asset_id), &token);
+    }
+
+    pub fn asset_token(env: Env, asset_id: U256) -> Option<Address> {
+        env.storage().instance().get(&Key::Asset(asset_id))
     }
 
     /// Shield / transfer / unshield. `ext_amount` is signed: >0 deposits USDC into
@@ -112,14 +125,15 @@ impl ShieldedPool {
         let i0 = merkle::insert(&env, c0.clone());
         let i1 = merkle::insert(&env, c1.clone());
 
-        // 7) move USDC at the pool edges
-        let token_addr: Address = s.get(&Key::Token).unwrap();
-        let usdc = token::TokenClient::new(&env, &token_addr);
+        // 7) move the asset's token at the pool edges (asset chosen by the proof)
+        let asset = verifier::asset_id(&env, &public);
+        let token_addr: Address = s.get(&Key::Asset(asset.clone())).expect("unknown asset");
+        let tok = token::TokenClient::new(&env, &token_addr);
         let pool = env.current_contract_address();
         if ext_amount > 0 {
-            usdc.transfer(&caller, &pool, &ext_amount); // shield in
+            tok.transfer(&caller, &pool, &ext_amount); // shield in
         } else if ext_amount < 0 {
-            usdc.transfer(&pool, &recipient, &(-ext_amount)); // unshield out
+            tok.transfer(&pool, &recipient, &(-ext_amount)); // unshield out
         }
 
         // 8) events: NewCommitment per output (recipient ciphertext) + nullifiers
@@ -127,15 +141,15 @@ impl ShieldedPool {
         env.events().publish((symbol_short!("commit"), i1), (c1, enc2));
         env.events().publish((symbol_short!("nullify"),), (nf0, nf1));
 
-        // audit events: the ENFORCED auditor ciphertext per output (R, c0, c1, c2)
+        // audit events: the ENFORCED auditor ciphertext per output (R, c0, c1, c2, assetId)
         let rx = verifier::auditor_r(&env, &public, 0);
         let ry = verifier::auditor_r(&env, &public, 1);
         env.events().publish((symbol_short!("audit"), i0),
             (rx.clone(), ry.clone(), verifier::auditor_cipher(&env, &public, 0, 0),
-             verifier::auditor_cipher(&env, &public, 0, 1), verifier::auditor_cipher(&env, &public, 0, 2)));
+             verifier::auditor_cipher(&env, &public, 0, 1), verifier::auditor_cipher(&env, &public, 0, 2), asset.clone()));
         env.events().publish((symbol_short!("audit"), i1),
             (rx, ry, verifier::auditor_cipher(&env, &public, 1, 0),
-             verifier::auditor_cipher(&env, &public, 1, 1), verifier::auditor_cipher(&env, &public, 1, 2)));
+             verifier::auditor_cipher(&env, &public, 1, 1), verifier::auditor_cipher(&env, &public, 1, 2), asset));
     }
 
     // --- views ---

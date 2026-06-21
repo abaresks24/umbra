@@ -45,8 +45,9 @@ class Keypair {
 
 class Note {
   // owner: a Keypair (if we can spend it) OR a plain pubkey BigInt/string (output to someone else).
-  constructor({ amount, owner, blinding }) {
+  constructor({ amount, assetId, owner, blinding }) {
     this.amount = BigInt(amount);
+    this.assetId = BigInt(assetId ?? 0);
     if (owner instanceof Keypair) {
       this.keypair = owner;
       this.pubkey = owner.pubkey;
@@ -56,9 +57,9 @@ class Note {
     }
     this.blinding = blinding === undefined ? randomField() : BigInt(blinding);
   }
-  // commitment = Poseidon(amount, pubkey, blinding)
+  // commitment = Poseidon(amount, assetId, pubkey, blinding)
   commitment() {
-    return poseidon([this.amount, this.pubkey, this.blinding]);
+    return poseidon([this.amount, this.assetId, this.pubkey, this.blinding]);
   }
   // nullifier = Poseidon(commitment, index, signature), signature = Poseidon(priv, commitment, index)
   // Requires the spending keypair (private key).
@@ -69,8 +70,8 @@ class Note {
     return poseidon([c, BigInt(index), sig]);
   }
   // A throwaway zero-value note to fill an unused input/output slot.
-  static dummy() {
-    return new Note({ amount: 0n, owner: new Keypair(), blinding: randomField() });
+  static dummy(assetId = 0n) {
+    return new Note({ amount: 0n, assetId, owner: new Keypair(), blinding: randomField() });
   }
 }
 

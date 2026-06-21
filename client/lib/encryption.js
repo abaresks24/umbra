@@ -66,6 +66,7 @@ function unpackEnc(encHex) {
 function encryptOutput(note, recipientViewPubHex) {
   const plaintext = {
     amount: note.amount.toString(),
+    assetId: note.assetId.toString(),
     blinding: note.blinding.toString(),
     spendPub: note.pubkey.toString(),
   };

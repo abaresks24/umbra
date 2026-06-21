@@ -42,15 +42,20 @@ function setDefaultAuditor(a) { _defaultAuditor = a; }
 
 // `auditor` = { pubX, pubY } is the contract-pinned auditor BJJ pubkey. Each
 // output is ALSO encrypted to it inside the circuit (ENFORCED disclosure).
-function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, auditor }) {
+function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, auditor, assetId }) {
   auditor = auditor || _defaultAuditor;
   if (!auditor) throw new Error("auditor pubkey { pubX, pubY } is required");
+  const asset = BigInt(assetId ?? 0);
   const realIns = inputs.slice();
   const nRealOuts = outputs.length;
   const realOuts = outputs.slice();
-  while (realIns.length < N_INS) realIns.push({ note: Note.dummy(), index: 0 });
-  while (realOuts.length < N_OUTS) realOuts.push(Note.dummy());
+  while (realIns.length < N_INS) realIns.push({ note: Note.dummy(asset), index: 0 });
+  while (realOuts.length < N_OUTS) realOuts.push(Note.dummy(asset));
   if (realIns.length > N_INS || realOuts.length > N_OUTS) throw new Error("too many notes");
+  for (const x of realIns) if (x.note.amount !== 0n && x.note.assetId !== asset)
+    throw new Error(`input note asset ${x.note.assetId} != tx asset ${asset}`);
+  for (const n of realOuts) if (n.amount !== 0n && n.assetId !== asset)
+    throw new Error(`output note asset ${n.assetId} != tx asset ${asset}`);
 
   // build the two output ciphertext blobs and bind them via extData
   extData = { ...extData };
@@ -110,6 +115,7 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, audit
     root,
     publicAmount: pubAmt.toString(),
     extDataHash: edHash.toString(),
+    assetId: asset.toString(),
     inputNullifier,
     outputCommitment,
     inAmount,
@@ -131,6 +137,7 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, audit
     witness.root,
     witness.publicAmount,
     witness.extDataHash,
+    witness.assetId,
     ...inputNullifier,
     ...outputCommitment,
     ...auditorPubKey,
@@ -140,7 +147,7 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, audit
 
   return { witness, expectedPublic, outputs: realOuts, outputCommitment, inputNullifier,
     enc1: extData.encryptedOutput1, enc2: extData.encryptedOutput2,
-    auditorR: aud.R, auditorCipher: aud.ciphers };
+    auditorR: aud.R, auditorCipher: aud.ciphers, assetId: asset };
 }
 
 // Node: prove with on-disk artifacts. Browser: call snarkjs.groth16.fullProve

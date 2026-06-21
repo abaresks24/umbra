@@ -71,6 +71,7 @@ template Transaction(levels, nIns, nOuts) {
     signal input root;
     signal input publicAmount;     // signed: >0 shield, <0 unshield (field-wrapped), 0 transfer
     signal input extDataHash;      // binds recipient/fee/ciphertexts; tamper => invalid proof
+    signal input assetId;          // which asset this tx moves (public; same for all notes here)
     signal input inputNullifier[nIns];
     signal input outputCommitment[nOuts];
 
@@ -106,10 +107,14 @@ template Transaction(levels, nIns, nOuts) {
         inKeypair[tx] = Keypair();
         inKeypair[tx].privateKey <== inPrivateKey[tx];
 
-        inCommitmentHasher[tx] = Poseidon(3);
+        // commitment = Poseidon(amount, assetId, pubkey, blinding). Using the
+        // public assetId here forces every spent note to be of that asset (a note
+        // committed under a different asset won't reproduce its Merkle leaf).
+        inCommitmentHasher[tx] = Poseidon(4);
         inCommitmentHasher[tx].inputs[0] <== inAmount[tx];
-        inCommitmentHasher[tx].inputs[1] <== inKeypair[tx].publicKey;
-        inCommitmentHasher[tx].inputs[2] <== inBlinding[tx];
+        inCommitmentHasher[tx].inputs[1] <== assetId;
+        inCommitmentHasher[tx].inputs[2] <== inKeypair[tx].publicKey;
+        inCommitmentHasher[tx].inputs[3] <== inBlinding[tx];
 
         // signature then nullifier; constrain to public nullifier
         inSignature[tx] = Signature();
@@ -142,10 +147,11 @@ template Transaction(levels, nIns, nOuts) {
     component outAmountCheck[nOuts];
     var sumOuts = 0;
     for (var tx = 0; tx < nOuts; tx++) {
-        outCommitmentHasher[tx] = Poseidon(3);
+        outCommitmentHasher[tx] = Poseidon(4);
         outCommitmentHasher[tx].inputs[0] <== outAmount[tx];
-        outCommitmentHasher[tx].inputs[1] <== outPubkey[tx];
-        outCommitmentHasher[tx].inputs[2] <== outBlinding[tx];
+        outCommitmentHasher[tx].inputs[1] <== assetId;
+        outCommitmentHasher[tx].inputs[2] <== outPubkey[tx];
+        outCommitmentHasher[tx].inputs[3] <== outBlinding[tx];
         outCommitmentHasher[tx].out === outputCommitment[tx];
 
         // range-check outputs to forbid negative/overflow values
@@ -216,5 +222,5 @@ template Transaction(levels, nIns, nOuts) {
     }
 }
 
-component main {public [root, publicAmount, extDataHash, inputNullifier, outputCommitment,
+component main {public [root, publicAmount, extDataHash, assetId, inputNullifier, outputCommitment,
     auditorPubKey, auditorR, auditorCipher]} = Transaction(8, 2, 2);

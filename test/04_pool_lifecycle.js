@@ -61,7 +61,8 @@ function transactArgs({ proof, publicSignals, recipient, extAmount, fee = 0 }) {
   console.log(`USDC SAC: ${USDC_SAC}`);
 
   CID = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
-  inv(`init --token ${USDC_SAC} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
+  inv(`init --admin ${USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
+  inv(`register_asset --asset_id 0 --token ${USDC_SAC}`);
   fs.writeFileSync(path.join(B, "pool_id.txt"), CID + "\n");
   console.log(`pool: ${CID}\n`);
 
@@ -88,7 +89,7 @@ function transactArgs({ proof, publicSignals, recipient, extAmount, fee = 0 }) {
   }
 
   async function doTransact(label, params, { send = true, expectFail = false } = {}) {
-    const { witness, outputCommitment } = buildWitness({ ...params.build, auditor: { pubX: auditor.pubX, pubY: auditor.pubY } });
+    const { witness, outputCommitment } = buildWitness({ ...params.build, auditor: { pubX: auditor.pubX, pubY: auditor.pubY }, assetId: 0n });
     const { proof, publicSignals } = await prove(witness);
     const args = transactArgs({ proof, publicSignals, recipient: params.recipient, extAmount: params.extAmount });
     const cost = instructionsOf(args);

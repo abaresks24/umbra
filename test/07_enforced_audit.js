@@ -21,29 +21,33 @@ const ck = (n, c) => { console.log(`  ${c ? "✅" : "❌"} ${n}`); c ? pass++ : 
   const auditor = newAuditorKey();
   const tree = buildTree([]);
 
-  // SHIELD 100 to Alice (output 0 = real, output 1 = dummy)
-  const A1 = new Note({ amount: 100n, owner: alice });
+  // SHIELD 100 of asset #2 to Alice (output 0 = real, output 1 = dummy)
+  const ASSET = 2n;
+  const A1 = new Note({ amount: 100n, assetId: ASSET, owner: alice });
   const r = buildWitness({
-    tree, inputs: [], outputs: [A1], publicAmount: 100n,
+    tree, inputs: [], outputs: [A1], publicAmount: 100n, assetId: ASSET,
     extData: { recipient: "x", extAmount: "100", fee: "0" }, auditor,
   });
   const { proof, publicSignals } = await prove(r.witness);
 
   ck("proof verifies (with enforced auditor encryption)", await snarkjs.groth16.verify(VK, publicSignals, proof));
   ck("public-signal order matches builder", JSON.stringify(publicSignals) === JSON.stringify(r.expectedPublic));
+  ck("assetId exposed in public signals", publicSignals[3] === ASSET.toString());
 
-  // public signals: [..7..] then audPubX(7) audPubY(8) Rx(9) Ry(10) c0(11-13) c1(14-16)
-  const audPub = [publicSignals[7], publicSignals[8]];
+  // signals: root(0) pubAmt(1) edHash(2) assetId(3) null(4,5) commit(6,7)
+  //          audPub(8,9) R(10,11) c0(12-14) c1(15-17)
+  const audPub = [publicSignals[8], publicSignals[9]];
   ck("auditor pubkey pinned in public signals", audPub[0] === auditor.pubX && audPub[1] === auditor.pubY);
 
-  const R = [publicSignals[9], publicSignals[10]];
-  const cipher0 = [publicSignals[11], publicSignals[12], publicSignals[13]];
-  const cipher1 = [publicSignals[14], publicSignals[15], publicSignals[16]];
+  const R = [publicSignals[10], publicSignals[11]];
+  const cipher0 = [publicSignals[12], publicSignals[13], publicSignals[14]];
+  const cipher1 = [publicSignals[15], publicSignals[16], publicSignals[17]];
 
   // Auditor decrypts output 0 from the PROOF's public signals.
   const m0 = decryptAuditOutput(R, cipher0, 0, auditor.priv);
   ck("auditor recovers output-0 amount = 100", m0[0] === 100n);
-  ck("recovered note recomputes to the on-chain commitment", poseidon(m0).toString() === publicSignals[5]);
+  // commitment = Poseidon(amount, assetId, pubkey, blinding)
+  ck("recovered note recomputes to the on-chain commitment", poseidon([m0[0], ASSET, m0[1], m0[2]]).toString() === publicSignals[6]);
 
   // Output 1 is the dummy (amount 0).
   const m1 = decryptAuditOutput(R, cipher1, 1, auditor.priv);
