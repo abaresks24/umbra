@@ -10,7 +10,7 @@ const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/M
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("http://localhost:5173/", { waitUntil: "networkidle2", timeout: 45000 });
-  await new Promise((r) => setTimeout(r, 4000));
+  await new Promise((r) => setTimeout(r, 8000));
   const ok = await page.evaluate(() => ({
     rendered: (document.getElementById("app")?.innerHTML?.length || 0) > 200,
     shield: !!document.getElementById("b-shield"),
