@@ -126,6 +126,7 @@ impl ShieldedPool {
         let i1 = merkle::insert(&env, c1.clone());
 
         // 7) move the asset's token at the pool edges (asset chosen by the proof)
+        assert!(fee >= 0, "negative fee");
         let asset = verifier::asset_id(&env, &public);
         let token_addr: Address = s.get(&Key::Asset(asset.clone())).expect("unknown asset");
         let tok = token::TokenClient::new(&env, &token_addr);
@@ -134,6 +135,13 @@ impl ShieldedPool {
             tok.transfer(&caller, &pool, &ext_amount); // shield in
         } else if ext_amount < 0 {
             tok.transfer(&pool, &recipient, &(-ext_amount)); // unshield out
+        }
+        // Pay the relayer (whoever submitted) a fee out of the shielded value, so a
+        // third party can relay a private transfer/withdrawal and the user never has
+        // to touch the chain (or pay gas) under their own identity. The circuit binds
+        // publicAmount = field(ext_amount - fee), so this `fee` is exactly accounted.
+        if fee > 0 {
+            tok.transfer(&pool, &caller, &fee);
         }
 
         // 8) events: NewCommitment per output (recipient ciphertext) + nullifiers
