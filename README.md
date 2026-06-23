@@ -6,7 +6,11 @@ private by default — **amounts and counterparties are hidden on-chain** — wi
 via a view key**. The kind of privacy a regulator can live with: opaque to the
 public, fully legible to an authorized auditor.
 
-Built for *Stellar Hacks: Real-World ZK*. **Testnet only, single asset (test USDC).**
+Built for *Stellar Hacks: Real-World ZK*. **Testnet only.** Multi-asset (USDC +
+WETH), relayer fees, decimals, note consolidation, and a Create/Connect wallet UI.
+
+> Security posture, trust assumptions, and the trusted-setup ceremony are
+> documented in [`SECURITY.md`](./SECURITY.md).
 
 ---
 
@@ -113,13 +117,18 @@ a *different* auditor key is **rejected on-chain**. **Privacy ≠ opacity.**
 - **Recipient discovery ciphertext is not circuit-enforced** — but that only
   affects whether the *recipient* can find their own note (their own interest),
   not auditability.
-- **Note scanning is simplified** — clients trial-decrypt all events; no optimized
-  indexer.
-- **Trusted setup** — Groth16 needs a per-circuit setup; this demo runs a local
-  Powers-of-Tau + phase-2. Production needs a proper multi-party ceremony.
-- **Shallow tree (depth 8 = 256 notes)** for the demo; scaling to millions of
-  notes needs recursion / proof aggregation.
-- **Testnet only, single asset**, amounts in token base units.
+- **Note scanning** trial-decrypts every event (one ECDH each). Fast scanning
+  needs a dedicated detection-key / fuzzy-message-detection scheme (future work) —
+  a view-tag doesn't help here because the ECDH can't be skipped without leaking.
+- **Trusted setup** — phase 1 uses the **real Perpetual Powers of Tau** ceremony
+  (hundreds of contributors); phase 2 is a multi-party chain + beacon, verified
+  (`snarkjs zkey verify`). For a production launch the phase-2 contributions must
+  be a public ceremony with external participants. See `SECURITY.md`.
+- **Shallow tree (depth 8 = 256 notes)** — bounded by the ~85M/100M instruction
+  budget per `transact`; scaling to millions needs recursion / proof aggregation.
+- **`assetId` is public** — the asset *type* of a transfer is visible (amounts and
+  parties stay hidden). A fully private asset type needs homomorphic asset commits.
+- **Testnet only.**
 - Pool edges (shield/unshield) reveal the public amount and the on-chain caller /
   recipient — inherent to shielded pools.
 
@@ -158,8 +167,9 @@ Prereqs: `rust` + `wasm32v1-none`, `stellar-cli`, `circom`, `snarkjs`, `node`.
 ```bash
 npm install
 
-# 1. Trusted setup for the transfer circuit (Powers-of-Tau + phase 2)
+# 1. Trusted setup: real Perpetual Powers of Tau + multi-party phase-2 + beacon
 ./circuits/build_transfer.sh
+circomspect circuits/transfer.circom -L node_modules/circomlib/circuits  # static analysis
 
 # 2. Build contracts
 (cd contracts/groth16-verifier && stellar contract build)
@@ -168,8 +178,8 @@ npm install
 # 3. A funded testnet identity named `shield`
 stellar keys generate shield --network testnet --fund
 
-# 4. Provision a test USDC SAC + trustlines (one-time)
-./scripts/setup_usdc.sh
+# 4. Provision test assets (USDC + a second asset WETH) + trustlines (one-time)
+./scripts/setup_usdc.sh && ./scripts/setup_weth.sh
 
 # 5. The tests
 (cd contracts/poseidon-match && cargo test) # Poseidon byte-match
@@ -181,9 +191,17 @@ node test/02_negative.js                   # soundness
 node scripts/lifecycle.js                  # proofs verified on testnet
 node test/04_pool_lifecycle.js             # full pool lifecycle on testnet
 node test/08_enforcement.js                # auditor enforcement REJECTED on-chain
+node test/09_multiasset.js                 # one pool holds USDC + WETH
+node test/10_onchain_spent.js              # balances derived from on-chain nullifiers
+node test/11_fee_relayer.js                # third-party relayer paid from shielded value
+node test/12_solvency.js                   # pool solvency invariant
 
 # 6. The headline demo (private payment + recipient scan + auditor reconstruction)
 node scripts/demo.js
+
+# 7. The web wallet (Create/Connect, multi-asset, in-browser proving)
+npm run web:init && npm run web:server   # terminal 1
+npm run web:dev                          # terminal 2  -> http://localhost:5173
 ```
 
 See `PROGRESS.md` for the phase-by-phase build log, measured costs, and the

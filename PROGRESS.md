@@ -79,7 +79,25 @@ Hackathon: *Stellar Hacks: Real-World ZK* · deadline **June 29, 12:00 PST** · 
 - [x] `web/README.md` — web wallet architecture + run
 - [x] This `PROGRESS.md` — full build log with measured costs
 
-## Status: all phases green. Submittable.
+## Production-hardening pass (post-hackathon)
+
+**P1 — security blockers**
+- 🟢 Credible trusted setup: real **Perpetual Powers of Tau** (power 16, hundreds of contributors) + multi-party phase-2 chain + public beacon, verified (`snarkjs zkey verify` → ZKey Ok). No more single-party local setup. (`circuits/build_transfer.sh`)
+- 🟢 `circomspect` static analysis: 2 warnings, both reviewed/intentional, no under-constrained vulns. (`SECURITY.md`)
+- 🟢 Solvency invariant proven on testnet (`test/12`): pool balance == shielded − unshielded − fees == Σ unspent notes.
+- 🟢 `SECURITY.md`: threat model, trust roles, honest limits.
+
+**P2 — product**
+- 🟢 Multi-asset (assetId in circuit; per-asset registry + balances). USDC + WETH. (`test/09`)
+- 🟢 Relayer **fees**: `transact` pays the submitter from shielded value (publicAmount = extAmount − fee); third party relays so the user never touches the chain. (`test/11`)
+- 🟢 On-chain spent tracking (balances correct on any device). (`test/10`)
+- 🟢 Decimals (human amounts, e.g. 0.5 USDC) + note **consolidation** (anti-dust merge button).
+- 🟡 Tree scaling (depth 8, budget-bound) and fast scanning (needs detection-key scheme) — documented as future work.
+
+**Wallet UX**
+- 🟢 Create/Connect flow (seed-derived identity, nothing hardcoded), Phantom-style UI, multi-asset, in-browser proving — verified headless (`web/smoke.cjs`).
+
+## Status: all phases green + hardened. Core is credible for a testnet product.
 Test suite: `node test/05_encryption.js`, `(cd contracts/poseidon-match && cargo test)`, `node test/01_local_lifecycle.js`, `node scripts/lifecycle.js`, `node test/02_negative.js`, `node test/04_pool_lifecycle.js`, `node scripts/demo.js`.
 
 ---
