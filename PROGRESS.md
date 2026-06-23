@@ -92,7 +92,9 @@ Hackathon: *Stellar Hacks: Real-World ZK* · deadline **June 29, 12:00 PST** · 
 - 🟢 Relayer **fees**: `transact` pays the submitter from shielded value (publicAmount = extAmount − fee); third party relays so the user never touches the chain. (`test/11`)
 - 🟢 On-chain spent tracking (balances correct on any device). (`test/10`)
 - 🟢 Decimals (human amounts, e.g. 0.5 USDC) + note **consolidation** (anti-dust merge button).
-- 🟡 Tree scaling (depth 8, budget-bound) and fast scanning (needs detection-key scheme) — documented as future work.
+- 🟢 **#3 Private asset type:** asset hidden for private transfers (revealedAssetId==0), revealed only at edges/fee txs; auditor always sees it (in 4-field cipher); no cross-asset minting. (`test/13`, on-chain 04/09/12)
+- 🟢 **#2 Tree scaling:** depth 8→16 (256→65,536 notes) via sibling-pair insertion — same ~89M/100M cost, no new hash, no matching risk. (on-chain `test/04`)
+- 🟡 Real scaling to millions (insertion-in-circuit + sequencer) and fast scanning (detection-key) — deliberately deferred (need audit / bigger rework).
 
 **Wallet UX**
 - 🟢 Create/Connect flow (seed-derived identity, nothing hardcoded), Phantom-style UI, multi-asset, in-browser proving — verified headless (`web/smoke.cjs`).
