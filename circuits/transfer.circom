@@ -234,4 +234,4 @@ template Transaction(levels, nIns, nOuts) {
 }
 
 component main {public [root, publicAmount, extDataHash, revealedAssetId, inputNullifier, outputCommitment,
-    auditorPubKey, auditorR, auditorCipher]} = Transaction(8, 2, 2);
+    auditorPubKey, auditorR, auditorCipher]} = Transaction(16, 2, 2);

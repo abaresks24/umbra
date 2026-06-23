@@ -6,7 +6,7 @@ use soroban_sdk::{contracttype, vec, Env, U256, Vec};
 use soroban_poseidon::poseidon_hash;
 use soroban_sdk::crypto::bn254::Bn254Fr;
 
-pub const LEVELS: u32 = 8;
+pub const LEVELS: u32 = 16; // 2^16 = 65,536 notes (pair-insertion keeps it within budget)
 pub const ROOT_HISTORY: u32 = 30;
 
 #[contracttype]
@@ -102,6 +102,50 @@ pub fn insert(env: &Env, leaf: U256) -> u32 {
     s.set(&TreeKey::RootIdx, &root_idx);
     s.set(&TreeKey::NextIndex, &(next + 1));
     next
+}
+
+/// Insert two ADJACENT leaves (the two tx outputs) in one go. Because they form a
+/// sibling pair, we hash them together first (1 hash) and then push that parent up
+/// the tree (LEVELS-1 hashes) — LEVELS hashes total instead of 2*LEVELS for two
+/// separate inserts. Produces the exact same root as inserting them sequentially.
+/// Requires nextIndex even (always true: the tree only ever grows by pairs).
+pub fn insert_pair(env: &Env, leaf0: U256, leaf1: U256) -> (u32, u32) {
+    let s = env.storage().instance();
+    let next: u32 = s.get(&TreeKey::NextIndex).unwrap();
+    assert!(next + 1 < (1u32 << LEVELS), "merkle tree full");
+
+    let zeros: Vec<U256> = s.get(&TreeKey::Zeros).unwrap();
+    let mut filled: Vec<U256> = s.get(&TreeKey::Filled).unwrap();
+
+    // level 0: the pair always completes, so filled[0] is never needed
+    let mut cur = hash2(env, leaf0, leaf1);
+    let mut idx = next / 2;
+    let mut i = 1u32;
+    while i < LEVELS {
+        let (left, right);
+        if idx % 2 == 0 {
+            left = cur.clone();
+            right = zeros.get(i).unwrap();
+            filled.set(i, cur.clone());
+        } else {
+            left = filled.get(i).unwrap();
+            right = cur.clone();
+        }
+        cur = hash2(env, left, right);
+        idx /= 2;
+        i += 1;
+    }
+
+    let mut root_idx: u32 = s.get(&TreeKey::RootIdx).unwrap();
+    let mut roots: Vec<U256> = s.get(&TreeKey::Roots).unwrap();
+    root_idx = (root_idx + 1) % ROOT_HISTORY;
+    roots.set(root_idx, cur);
+
+    s.set(&TreeKey::Filled, &filled);
+    s.set(&TreeKey::Roots, &roots);
+    s.set(&TreeKey::RootIdx, &root_idx);
+    s.set(&TreeKey::NextIndex, &(next + 2));
+    (next, next + 1)
 }
 
 pub fn current_root(env: &Env) -> U256 {

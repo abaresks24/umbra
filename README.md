@@ -62,8 +62,9 @@ recipient/amounts can't be tampered with after proving.
 
 - **BN254 Groth16 verifier** using Stellar's **native BN254 host functions**
   (CAP-0074, Protocol 25+).
-- **Incremental Merkle tree** (depth 8) hashed with the **native Poseidon host
-  function** (CAP-0075) via [`soroban-poseidon`](https://github.com/stellar/rs-soroban-poseidon)
+- **Incremental Merkle tree** (depth 16, 65,536 notes; outputs inserted as a
+  sibling pair) hashed with the **native Poseidon host function** (CAP-0075) via
+  [`soroban-poseidon`](https://github.com/stellar/rs-soroban-poseidon)
   — byte-for-byte identical to circomlib's Poseidon (proven in Phase 0).
 - **Root-history ring buffer** (30 roots) so a proof built against a slightly
   stale root still validates.
@@ -72,7 +73,7 @@ recipient/amounts can't be tampered with after proving.
   output commitments, moves USDC at the edges via the **USDC SAC**, and emits
   events carrying the encrypted note payloads.
 
-Every `transact` costs **~85M / 100M** instructions at depth 8 (including the
+Every `transact` costs **~89M / 100M** instructions at depth 16 (including the
 in-circuit auditor encryption) — within Soroban's budget.
 
 ## Compliance — ENFORCED auditor disclosure (the differentiator)
@@ -124,14 +125,14 @@ a *different* auditor key is **rejected on-chain**. **Privacy ≠ opacity.**
   (hundreds of contributors); phase 2 is a multi-party chain + beacon, verified
   (`snarkjs zkey verify`). For a production launch the phase-2 contributions must
   be a public ceremony with external participants. See `SECURITY.md`.
-- **Shallow tree (depth 8 = 256 notes)** — bounded by the ~85M/100M instruction
-  budget per `transact`; scaling to millions needs recursion / proof aggregation.
 - **Asset type** is now **hidden for private transfers** (`revealedAssetId == 0`);
   it is revealed only at the pool edges (shield/unshield) or a fee-paying tx, where
   the real token movement reveals it anyway. The auditor always sees it.
-- **Tree scaling** — depth 8, bounded by the ~89M/100M instruction budget per
-  `transact` (on-chain Poseidon insertion). Deep trees need either insertion-in-
-  circuit (+ a sequencer) or recursion. (Next work item.)
+- **Tree** is depth **16 (65,536 notes)**. The two outputs are inserted as a
+  sibling pair (LEVELS hashes instead of 2*LEVELS), so depth 16 costs the same
+  ~89M/100M as depth 8 did. Scaling to millions needs insertion-in-circuit (+ a
+  sequencer) or recursion — deliberately deferred (it moves tree soundness into
+  the circuit and should be audited).
 - **Testnet only.**
 - Pool edges (shield/unshield) reveal the public amount and the on-chain caller /
   recipient — inherent to shielded pools.

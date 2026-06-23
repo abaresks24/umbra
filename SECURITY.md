@@ -63,7 +63,7 @@ No under-constrained-signal vulnerabilities were found.
 
 - No professional audit; no formal verification of the circuit.
 - Phase-2 ceremony contributors are local (see above).
-- Merkle depth 8 (256 notes) — see README "scaling" note.
+- Merkle depth 16 (65,536 notes via pair-insertion) — millions needs insertion-in-circuit, deferred.
 - Asset type is hidden for private transfers (revealed only at edges/fee txs).
   Pool edges still reveal the on-chain caller/recipient and the public amount.
 - Anonymity-set quality depends on pool usage; no fixed denominations or timing

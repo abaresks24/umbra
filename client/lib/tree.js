@@ -4,7 +4,7 @@
 const { MerkleTree } = require("fixed-merkle-tree");
 const { poseidon } = require("./crypto");
 
-const LEVELS = 8; // 2^8 = 256 notes — ample for the demo, fits the instruction budget
+const LEVELS = 16; // 2^16 = 65,536 notes (pair-insertion on-chain keeps it within budget)
 const ZERO = "0";
 
 function poseidonHash2(left, right) {

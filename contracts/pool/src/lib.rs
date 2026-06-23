@@ -122,8 +122,7 @@ impl ShieldedPool {
         // 6) insert the two output commitments into the tree
         let c0 = verifier::commitment(&env, &public, 0);
         let c1 = verifier::commitment(&env, &public, 1);
-        let i0 = merkle::insert(&env, c0.clone());
-        let i1 = merkle::insert(&env, c1.clone());
+        let (i0, i1) = merkle::insert_pair(&env, c0.clone(), c1.clone());
 
         // 7) move the asset's token at the pool edges. The asset is revealed only
         // when there is movement (publicAmount != 0); for a PURE private transfer
