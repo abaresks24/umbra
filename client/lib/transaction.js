@@ -54,8 +54,9 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, audit
   if (realIns.length > N_INS || realOuts.length > N_OUTS) throw new Error("too many notes");
   for (const x of realIns) if (x.note.amount !== 0n && x.note.assetId !== asset)
     throw new Error(`input note asset ${x.note.assetId} != tx asset ${asset}`);
-  for (const n of realOuts) if (n.amount !== 0n && n.assetId !== asset)
-    throw new Error(`output note asset ${n.assetId} != tx asset ${asset}`);
+  // Every output of a tx is the SAME asset (single-asset-per-tx) — assign it here
+  // so the commitment + ciphertext use the tx asset.
+  for (const n of realOuts) n.assetId = asset;
 
   // build the two output ciphertext blobs and bind them via extData
   extData = { ...extData };
@@ -104,18 +105,23 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, audit
   }
 
   // ENFORCED auditor encryption (Baby Jubjub ElGamal) — must match transfer.circom.
+  // 4 fields now: the asset is encrypted to the auditor (it's hidden from the public).
   const encRandom = randomScalar();
-  const msgs = realOuts.map((n) => [n.amount, n.pubkey, n.blinding]);
+  const msgs = realOuts.map((n) => [n.amount, n.assetId, n.pubkey, n.blinding]);
   const aud = encryptOutputsToAuditor(msgs, auditor, encRandom);
   const auditorPubKey = [String(auditor.pubX), String(auditor.pubY)];
   const auditorR = aud.R.map(String);
   const auditorCipher = aud.ciphers.map((row) => row.map(String));
 
+  // Asset is revealed only at an edge / fee-paying tx (publicAmount != 0); else hidden.
+  const revealedAssetId = pubAmt === 0n ? 0n : asset;
+
   const witness = {
     root,
     publicAmount: pubAmt.toString(),
     extDataHash: edHash.toString(),
-    assetId: asset.toString(),
+    revealedAssetId: revealedAssetId.toString(),
+    assetId: asset.toString(), // private
     inputNullifier,
     outputCommitment,
     inAmount,
@@ -137,7 +143,7 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, audit
     witness.root,
     witness.publicAmount,
     witness.extDataHash,
-    witness.assetId,
+    witness.revealedAssetId,
     ...inputNullifier,
     ...outputCommitment,
     ...auditorPubKey,

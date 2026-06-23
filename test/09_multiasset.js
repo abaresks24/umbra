@@ -1,4 +1,4 @@
-// Multi-asset gate: ONE pool, TWO assets. Register USDC (asset 0) + WETH (asset 1),
+// Multi-asset gate: ONE pool, TWO assets. Register USDC (asset 2) + WETH (asset 2),
 // shield both, check per-asset pool balances, and the auditor reconstructs each
 // note WITH its asset. Proves the pool holds multiple balances and conservation
 // is per-asset (the proof's assetId picks the token).
@@ -38,9 +38,9 @@ const bal = (sac) => sh(`stellar contract invoke --id ${sac} --source shield --n
   console.log("== multi-asset pool ==\n");
   CID = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
   inv(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
-  inv(`register_asset --asset_id 0 --token ${e.USDC_SAC}`);
-  inv(`register_asset --asset_id 1 --token ${e.WETH_SAC}`);
-  console.log(`pool: ${CID}  (asset 0=USDC, asset 1=WETH)\n`);
+  inv(`register_asset --asset_id 1 --token ${e.USDC_SAC}`);
+  inv(`register_asset --asset_id 2 --token ${e.WETH_SAC}`);
+  console.log(`pool: ${CID}  (asset 1=USDC, asset 1=WETH)\n`);
 
   const usdcBefore = BigInt(bal(e.USDC_SAC)), wethBefore = BigInt(bal(e.WETH_SAC));
 
@@ -60,8 +60,8 @@ const bal = (sac) => sh(`stellar contract invoke --id ${sac} --source shield --n
     tree.insert(r.outputCommitment[0]); tree.insert(r.outputCommitment[1]);
   }
 
-  await shield(100n, 0n, "SHIELD 100 USDC (asset 0)");
-  await shield(50n, 1n, "SHIELD 50 WETH (asset 1)");
+  await shield(100n, 1n, "SHIELD 100 USDC (asset 1)");
+  await shield(50n, 2n, "SHIELD 50 WETH (asset 2)");
 
   ck(`pool USDC balance +100 (Δ=${BigInt(bal(e.USDC_SAC)) - usdcBefore})`, BigInt(bal(e.USDC_SAC)) - usdcBefore === 100n);
   ck(`pool WETH balance +50 (Δ=${BigInt(bal(e.WETH_SAC)) - wethBefore})`, BigInt(bal(e.WETH_SAC)) - wethBefore === 50n);
@@ -74,8 +74,8 @@ const bal = (sac) => sh(`stellar contract invoke --id ${sac} --source shield --n
   const audited = auditEnforced(commits, auditMap, auditor.priv).filter((a) => !a.opaque && a.amount > 0n);
   console.log("  auditor sees:");
   for (const a of audited) console.log(`    leaf #${a.index}: ${a.amount} of asset ${a.assetId}`);
-  ck("auditor reconstructs 100 of asset 0", audited.some((a) => a.amount === 100n && a.assetId === 0n));
-  ck("auditor reconstructs 50 of asset 1", audited.some((a) => a.amount === 50n && a.assetId === 1n));
+  ck("auditor reconstructs 100 of asset 1 (USDC)", audited.some((a) => a.amount === 100n && a.assetId === 1n));
+  ck("auditor reconstructs 50 of asset 2 (WETH)", audited.some((a) => a.amount === 50n && a.assetId === 2n));
 
   console.log(`\n${fail === 0 ? "🎉 MULTI-ASSET WORKS" : "❌"}: ${pass} passed, ${fail} failed`);
   console.log(`   pool: https://stellar.expert/explorer/testnet/contract/${CID}`);

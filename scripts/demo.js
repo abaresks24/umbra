@@ -60,7 +60,7 @@ async function main() {
   const startLedger = (await server.getLatestLedger()).sequence - 1;
   CID = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
   inv(`init --admin ${USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
-  inv(`register_asset --asset_id 0 --token ${USDC_SAC}`);
+  inv(`register_asset --asset_id 1 --token ${USDC_SAC}`);
   line(`pool deployed: ${CID}\n`);
 
   const tree = buildTree([]);
@@ -68,7 +68,7 @@ async function main() {
   const auditorKey = { pubX: auditor.pubX, pubY: auditor.pubY };
 
   async function transact(label, params, extAmount, recipient) {
-    const r = buildWitness({ ...params, auditor: auditorKey, assetId: 0n });
+    const r = buildWitness({ ...params, auditor: auditorKey, assetId: 1n });
     const { proof, publicSignals } = await prove(r.witness);
     const args =
       `transact --caller ${USER_ADDR} --proof ${proofToHex(proof)} --public ${publicToHex(publicSignals)}` +

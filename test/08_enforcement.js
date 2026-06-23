@@ -30,9 +30,9 @@ function simTransact(args) {
 
 async function shieldArgs(auditor) {
   const tree = buildTree([]);
-  const note = new Note({ amount: 100n, assetId: 0n, owner: new Keypair() });
+  const note = new Note({ amount: 100n, assetId: 1n, owner: new Keypair() });
   const r = buildWitness({
-    tree, inputs: [], outputs: [note], publicAmount: 100n, assetId: 0n,
+    tree, inputs: [], outputs: [note], publicAmount: 100n, assetId: 1n,
     extData: { recipient: e.USER_ADDR, extAmount: "100", fee: "0" },
     auditor: { pubX: auditor.pubX, pubY: auditor.pubY },
   });
@@ -49,7 +49,7 @@ async function shieldArgs(auditor) {
 
   CID = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
   sh(`stellar contract invoke --id ${CID} --source shield --network testnet -- init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditorA.pubX} --auditor_y ${auditorA.pubY}`);
-  sh(`stellar contract invoke --id ${CID} --source shield --network testnet -- register_asset --asset_id 0 --token ${e.USDC_SAC}`);
+  sh(`stellar contract invoke --id ${CID} --source shield --network testnet -- register_asset --asset_id 1 --token ${e.USDC_SAC}`);
   console.log(`pool pinned to auditor A: ${CID}\n`);
 
   // proof encrypted to A → accepted

@@ -33,8 +33,8 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
     try { return Number(sh(`stellar contract invoke --id ${sac} --source shield --network testnet -- decimals`).replace(/"/g, "")); }
     catch { return 7; } // classic Stellar assets default to 7
   };
-  const assets = [{ id: 0, symbol: "USDC", sac: e.USDC_SAC, decimals: decimalsOf(e.USDC_SAC) }];
-  if (e.WETH_SAC) assets.push({ id: 1, symbol: "WETH", sac: e.WETH_SAC, decimals: decimalsOf(e.WETH_SAC) });
+  const assets = [{ id: 1, symbol: "USDC", sac: e.USDC_SAC, decimals: decimalsOf(e.USDC_SAC) }];
+  if (e.WETH_SAC) assets.push({ id: 2, symbol: "WETH", sac: e.WETH_SAC, decimals: decimalsOf(e.WETH_SAC) });
   for (const a of assets) ip(`register_asset --asset_id ${a.id} --token ${a.sac}`);
   console.log("registered assets:", assets.map((a) => `${a.id}=${a.symbol}`).join(", "));
 

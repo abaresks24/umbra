@@ -125,23 +125,25 @@ impl ShieldedPool {
         let i0 = merkle::insert(&env, c0.clone());
         let i1 = merkle::insert(&env, c1.clone());
 
-        // 7) move the asset's token at the pool edges (asset chosen by the proof)
+        // 7) move the asset's token at the pool edges. The asset is revealed only
+        // when there is movement (publicAmount != 0); for a PURE private transfer
+        // `revealed_asset == 0` and the asset stays hidden — no token logic at all.
         assert!(fee >= 0, "negative fee");
-        let asset = verifier::asset_id(&env, &public);
-        let token_addr: Address = s.get(&Key::Asset(asset.clone())).expect("unknown asset");
-        let tok = token::TokenClient::new(&env, &token_addr);
+        let asset = verifier::revealed_asset(&env, &public);
         let pool = env.current_contract_address();
-        if ext_amount > 0 {
-            tok.transfer(&caller, &pool, &ext_amount); // shield in
-        } else if ext_amount < 0 {
-            tok.transfer(&pool, &recipient, &(-ext_amount)); // unshield out
-        }
-        // Pay the relayer (whoever submitted) a fee out of the shielded value, so a
-        // third party can relay a private transfer/withdrawal and the user never has
-        // to touch the chain (or pay gas) under their own identity. The circuit binds
-        // publicAmount = field(ext_amount - fee), so this `fee` is exactly accounted.
-        if fee > 0 {
-            tok.transfer(&pool, &caller, &fee);
+        if asset != U256::from_u32(&env, 0) {
+            let token_addr: Address = s.get(&Key::Asset(asset.clone())).expect("unknown asset");
+            let tok = token::TokenClient::new(&env, &token_addr);
+            if ext_amount > 0 {
+                tok.transfer(&caller, &pool, &ext_amount); // shield in
+            } else if ext_amount < 0 {
+                tok.transfer(&pool, &recipient, &(-ext_amount)); // unshield out
+            }
+            // Pay the relayer a fee from the shielded value (publicAmount = ext_amount
+            // - fee), so a third party can relay. Paying a fee reveals the asset.
+            if fee > 0 {
+                tok.transfer(&pool, &caller, &fee);
+            }
         }
 
         // 8) events: NewCommitment per output (recipient ciphertext) + nullifiers
@@ -154,10 +156,10 @@ impl ShieldedPool {
         let ry = verifier::auditor_r(&env, &public, 1);
         env.events().publish((symbol_short!("audit"), i0),
             (rx.clone(), ry.clone(), verifier::auditor_cipher(&env, &public, 0, 0),
-             verifier::auditor_cipher(&env, &public, 0, 1), verifier::auditor_cipher(&env, &public, 0, 2), asset.clone()));
+             verifier::auditor_cipher(&env, &public, 0, 1), verifier::auditor_cipher(&env, &public, 0, 2), verifier::auditor_cipher(&env, &public, 0, 3)));
         env.events().publish((symbol_short!("audit"), i1),
             (rx, ry, verifier::auditor_cipher(&env, &public, 1, 0),
-             verifier::auditor_cipher(&env, &public, 1, 1), verifier::auditor_cipher(&env, &public, 1, 2), asset));
+             verifier::auditor_cipher(&env, &public, 1, 1), verifier::auditor_cipher(&env, &public, 1, 2), verifier::auditor_cipher(&env, &public, 1, 3)));
     }
 
     // --- views ---

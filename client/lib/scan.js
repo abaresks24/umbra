@@ -67,8 +67,8 @@ async function fetchAuditEvents(contractId, startLedger) {
     for (const ev of evs) {
       const topics = (ev.topic || []).map(scValToNative);
       if (topics[0] !== "audit") continue;
-      const d = scValToNative(ev.value).map((x) => BigInt(x)); // [Rx, Ry, c0, c1, c2, assetId]
-      out[Number(topics[1])] = { R: [d[0], d[1]], cipher: [d[2], d[3], d[4]], assetId: d[5] };
+      const d = scValToNative(ev.value).map((x) => BigInt(x)); // [Rx, Ry, c0, c1, c2, c3]
+      out[Number(topics[1])] = { R: [d[0], d[1]], cipher: [d[2], d[3], d[4], d[5]] };
     }
     if (evs.length < 100) break;
     cursor = evs[evs.length - 1].pagingToken;
@@ -118,11 +118,10 @@ function auditEnforced(commitEvents, auditMap, auditorPriv) {
     if (!a) { decoded.push({ index: ev.index, commitment: ev.commitment, opaque: true }); continue; }
     let hit = null;
     for (const t of [0, 1]) {
-      const m = decryptAuditOutput(a.R, a.cipher, t, auditorPriv); // [amount, pubkey, blinding]
-      // commitment = Poseidon(amount, assetId, pubkey, blinding); assetId is public
-      if (poseidon([m[0], a.assetId, m[1], m[2]]).toString() === ev.commitment) { hit = m; break; }
+      const m = decryptAuditOutput(a.R, a.cipher, t, auditorPriv); // [amount, assetId, pubkey, blinding]
+      if (poseidon([m[0], m[1], m[2], m[3]]).toString() === ev.commitment) { hit = m; break; }
     }
-    if (hit) decoded.push({ index: ev.index, commitment: ev.commitment, amount: hit[0], assetId: a.assetId, owner: hit[1].toString() });
+    if (hit) decoded.push({ index: ev.index, commitment: ev.commitment, amount: hit[0], assetId: hit[1], owner: hit[2].toString() });
     else decoded.push({ index: ev.index, commitment: ev.commitment, opaque: true });
   }
   return decoded;

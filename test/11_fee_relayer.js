@@ -28,13 +28,13 @@ const bal = (addr) => BigInt(sh(`stellar contract invoke --id ${e.USDC_SAC} --so
   const auditor = newAuditorKey(); const alice = new Keypair(); const tree = buildTree([]);
   CID = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
   inv(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
-  inv(`register_asset --asset_id 0 --token ${e.USDC_SAC}`);
+  inv(`register_asset --asset_id 1 --token ${e.USDC_SAC}`);
   console.log(`pool: ${CID}\n`);
   const aud = { pubX: auditor.pubX, pubY: auditor.pubY };
 
   // shield 100 (pool funded)
-  const A = new Note({ amount: 100n, assetId: 0n, owner: alice });
-  let r = buildWitness({ tree, inputs: [], outputs: [A], publicAmount: 100n, assetId: 0n, auditor: aud, extData: { recipient: e.USER_ADDR, extAmount: "100", fee: "0", encryptedOutput1: "00", encryptedOutput2: "00" } });
+  const A = new Note({ amount: 100n, assetId: 1n, owner: alice });
+  let r = buildWitness({ tree, inputs: [], outputs: [A], publicAmount: 100n, assetId: 1n, auditor: aud, extData: { recipient: e.USER_ADDR, extAmount: "100", fee: "0", encryptedOutput1: "00", encryptedOutput2: "00" } });
   let pr = await prove(r.witness);
   sendAs("shield", `transact --caller ${e.USER_ADDR} --proof ${proofToHex(pr.proof)} --public ${publicToHex(pr.publicSignals)} --recipient ${e.USER_ADDR} --ext_amount=100 --fee=0 --enc1 ${r.enc1} --enc2 ${r.enc2}`);
   tree.insert(r.outputCommitment[0]); tree.insert(r.outputCommitment[1]);
@@ -42,8 +42,8 @@ const bal = (addr) => BigInt(sh(`stellar contract invoke --id ${e.USDC_SAC} --so
 
   // private transfer with fee=5, submitted by the RELAYER (recipient identity, != owner)
   const relayerBefore = bal(e.RECIP_ADDR), poolBefore = bal(CID);
-  const toSelf = new Note({ amount: 95n, assetId: 0n, owner: alice }); // 100 - 5 fee
-  r = buildWitness({ tree, inputs: [{ note: A, index: 0 }], outputs: [toSelf], publicAmount: -5n, assetId: 0n, auditor: aud,
+  const toSelf = new Note({ amount: 95n, assetId: 1n, owner: alice }); // 100 - 5 fee
+  r = buildWitness({ tree, inputs: [{ note: A, index: 0 }], outputs: [toSelf], publicAmount: -5n, assetId: 1n, auditor: aud,
     extData: { recipient: e.USER_ADDR, extAmount: "0", fee: "5", encryptedOutput1: "00", encryptedOutput2: "00" } });
   pr = await prove(r.witness);
   try {

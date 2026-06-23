@@ -34,7 +34,7 @@ const poolBal = () => BigInt(sh(`stellar contract invoke --id ${e.USDC_SAC} --so
 
   CID = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
   inv(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
-  inv(`register_asset --asset_id 0 --token ${e.USDC_SAC}`);
+  inv(`register_asset --asset_id 1 --token ${e.USDC_SAC}`);
   const start = poolBal();
   console.log(`pool: ${CID}\n`);
 
@@ -43,7 +43,7 @@ const poolBal = () => BigInt(sh(`stellar contract invoke --id ${e.USDC_SAC} --so
     for (const x of inputs) x.entry.spent = true;
     const r = buildWitness({
       tree, inputs: inputs.map((x) => ({ note: x.entry.note, index: x.entry.index })),
-      outputs: outputs.map((o) => o.note), publicAmount: BigInt(extAmount) - BigInt(fee), assetId: 0n, auditor: aud,
+      outputs: outputs.map((o) => o.note), publicAmount: BigInt(extAmount) - BigInt(fee), assetId: 1n, auditor: aud,
       extData: { recipient: e.USER_ADDR, extAmount: String(extAmount), fee: String(fee), encryptedOutput1: "00", encryptedOutput2: "00" },
     });
     const pr = await prove(r.witness);
@@ -56,7 +56,7 @@ const poolBal = () => BigInt(sh(`stellar contract invoke --id ${e.USDC_SAC} --so
     console.log(`  ✓ ${label}`);
   }
 
-  const N = (amt, owner) => ({ note: new Note({ amount: BigInt(amt), assetId: 0n, owner }) });
+  const N = (amt, owner) => ({ note: new Note({ amount: BigInt(amt), assetId: 1n, owner }) });
   const A = N(100, alice), Bn = N(50, alice);
   await op("shield 100", { outputs: [A], extAmount: 100 });
   await op("shield 50", { outputs: [Bn], extAmount: 50 });

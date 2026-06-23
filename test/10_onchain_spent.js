@@ -45,11 +45,11 @@ const send = (a) => sh(`stellar contract invoke --id ${CID} --source shield --ne
 
   CID = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
   inv(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
-  inv(`register_asset --asset_id 0 --token ${e.USDC_SAC}`);
+  inv(`register_asset --asset_id 1 --token ${e.USDC_SAC}`);
   console.log(`pool: ${CID}\n`);
 
   async function tx(label, params, ext, recipient) {
-    const r = buildWitness({ ...params, assetId: 0n, auditor: { pubX: auditor.pubX, pubY: auditor.pubY } });
+    const r = buildWitness({ ...params, assetId: 1n, auditor: { pubX: auditor.pubX, pubY: auditor.pubY } });
     const { proof, publicSignals } = await prove(r.witness);
     send(`transact --caller ${e.USER_ADDR} --proof ${proofToHex(proof)} --public ${publicToHex(publicSignals)}` +
       ` --recipient ${recipient} --ext_amount=${ext} --fee=0 --enc1 ${r.enc1} --enc2 ${r.enc2}`);
@@ -59,9 +59,9 @@ const send = (a) => sh(`stellar contract invoke --id ${CID} --source shield --ne
 
   const ed = (amt) => ({ recipient: e.USER_ADDR, extAmount: String(amt), fee: "0", encryptedOutput1: "00", encryptedOutput2: "00" });
   // shield A=100 and B=50
-  const A = new Note({ amount: 100n, assetId: 0n, owner: alice });
+  const A = new Note({ amount: 100n, assetId: 1n, owner: alice });
   const ai = await tx("SHIELD A=100", { tree, inputs: [], outputs: [A], publicAmount: 100n, extData: ed(100) }, 100, e.USER_ADDR);
-  const Bn = new Note({ amount: 50n, assetId: 0n, owner: alice });
+  const Bn = new Note({ amount: 50n, assetId: 1n, owner: alice });
   const bi = await tx("SHIELD B=50", { tree, inputs: [], outputs: [Bn], publicAmount: 50n, extData: ed(50) }, 50, e.USER_ADDR);
 
   // spend A (unshield 100); leave B unspent

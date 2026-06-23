@@ -71,11 +71,14 @@ template Transaction(levels, nIns, nOuts) {
     signal input root;
     signal input publicAmount;     // signed: >0 shield, <0 unshield (field-wrapped), 0 transfer
     signal input extDataHash;      // binds recipient/fee/ciphertexts; tamper => invalid proof
-    signal input assetId;          // which asset this tx moves (public; same for all notes here)
+    // The asset is PRIVATE — hidden for pure transfers. It is only revealed at the
+    // pool edges (shield/unshield), where the real token movement reveals it anyway.
+    signal input revealedAssetId;  // public: == assetId at an edge, 0 for a private transfer
     signal input inputNullifier[nIns];
     signal input outputCommitment[nOuts];
 
     // --- private: inputs ---
+    signal input assetId;          // PRIVATE: the asset of every note in this tx
     signal input inAmount[nIns];
     signal input inPrivateKey[nIns];
     signal input inBlinding[nIns];
@@ -91,8 +94,13 @@ template Transaction(levels, nIns, nOuts) {
     // Public so the contract can pin the auditor key and emit the ciphertext.
     signal input auditorPubKey[2];          // fixed auditor BJJ pubkey (contract-pinned)
     signal input auditorR[2];               // ephemeral pubkey R = r·B8
-    signal input auditorCipher[nOuts][3];   // ciphertext of (amount,pubkey,blinding) per output
+    signal input auditorCipher[nOuts][4];   // ciphertext of (amount,assetId,pubkey,blinding) per output
     signal input encRandom;                 // ephemeral scalar r (private)
+
+    // Reveal the asset only at an edge: revealedAssetId = (publicAmount != 0) ? assetId : 0.
+    component pubIsZero = IsZero();
+    pubIsZero.in <== publicAmount;
+    revealedAssetId === (1 - pubIsZero.out) * assetId;
 
     component inKeypair[nIns];
     component inCommitmentHasher[nIns];
@@ -204,23 +212,26 @@ template Transaction(levels, nIns, nOuts) {
     encS.p[1] <== auditorPubKey[1];
 
     component encKey[nOuts];
-    component encKs[nOuts][3];
+    component encKs[nOuts][4];
     for (var t = 0; t < nOuts; t++) {
         encKey[t] = Poseidon(3);
         encKey[t].inputs[0] <== encS.out[0];
         encKey[t].inputs[1] <== encS.out[1];
         encKey[t].inputs[2] <== t;
 
-        for (var j = 0; j < 3; j++) {
+        for (var j = 0; j < 4; j++) {
             encKs[t][j] = Poseidon(2);
             encKs[t][j].inputs[0] <== encKey[t].out;
             encKs[t][j].inputs[1] <== j;
         }
+        // encrypt (amount, assetId, pubkey, blinding) so the auditor sees the asset
+        // even though it is hidden from the public.
         auditorCipher[t][0] === outAmount[t] + encKs[t][0].out;
-        auditorCipher[t][1] === outPubkey[t] + encKs[t][1].out;
-        auditorCipher[t][2] === outBlinding[t] + encKs[t][2].out;
+        auditorCipher[t][1] === assetId + encKs[t][1].out;
+        auditorCipher[t][2] === outPubkey[t] + encKs[t][2].out;
+        auditorCipher[t][3] === outBlinding[t] + encKs[t][3].out;
     }
 }
 
-component main {public [root, publicAmount, extDataHash, assetId, inputNullifier, outputCommitment,
+component main {public [root, publicAmount, extDataHash, revealedAssetId, inputNullifier, outputCommitment,
     auditorPubKey, auditorR, auditorCipher]} = Transaction(8, 2, 2);
