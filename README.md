@@ -126,8 +126,12 @@ a *different* auditor key is **rejected on-chain**. **Privacy ≠ opacity.**
   be a public ceremony with external participants. See `SECURITY.md`.
 - **Shallow tree (depth 8 = 256 notes)** — bounded by the ~85M/100M instruction
   budget per `transact`; scaling to millions needs recursion / proof aggregation.
-- **`assetId` is public** — the asset *type* of a transfer is visible (amounts and
-  parties stay hidden). A fully private asset type needs homomorphic asset commits.
+- **Asset type** is now **hidden for private transfers** (`revealedAssetId == 0`);
+  it is revealed only at the pool edges (shield/unshield) or a fee-paying tx, where
+  the real token movement reveals it anyway. The auditor always sees it.
+- **Tree scaling** — depth 8, bounded by the ~89M/100M instruction budget per
+  `transact` (on-chain Poseidon insertion). Deep trees need either insertion-in-
+  circuit (+ a sequencer) or recursion. (Next work item.)
 - **Testnet only.**
 - Pool edges (shield/unshield) reveal the public amount and the on-chain caller /
   recipient — inherent to shielded pools.
