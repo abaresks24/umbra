@@ -8,10 +8,24 @@ const { decryptAuditOutput } = require("./auditor");
 
 const RPC_URL = process.env.STELLAR_RPC || "https://soroban-testnet.stellar.org";
 
+// The Soroban RPC only retains events for a limited window (~24h on testnet).
+// Clamp the requested startLedger into the allowed range so getEvents never hard
+// -fails over time; a production deployment would persist events in an indexer.
+const RETENTION = 17000;
+async function clampStart(server, startLedger) {
+  try {
+    const latest = (await server.getLatestLedger()).sequence;
+    return Math.max(1, Math.max(startLedger, latest - RETENTION));
+  } catch {
+    return Math.max(1, startLedger);
+  }
+}
+
 // Fetch all `commit` events for `contractId` since `startLedger`.
 // Returns [{ ledger, index, commitment(string), enc(hex) }] in tree order.
 async function fetchCommitEvents(contractId, startLedger) {
   const server = new rpc.Server(RPC_URL);
+  startLedger = await clampStart(server, startLedger);
   const out = [];
   let cursor;
   for (;;) {
@@ -56,6 +70,7 @@ function scanOwned(events, viewSecretHex, spendKeypair) {
 // Fetch the ENFORCED auditor ciphertext events: per leaf, (R, c0, c1, c2).
 async function fetchAuditEvents(contractId, startLedger) {
   const server = new rpc.Server(RPC_URL);
+  startLedger = await clampStart(server, startLedger);
   const out = {};
   let cursor;
   for (;;) {
@@ -87,6 +102,7 @@ function nullifierHex(big) {
 // real balance on ANY device — no local bookkeeping needed.
 async function fetchSpentNullifiers(contractId, startLedger) {
   const server = new rpc.Server(RPC_URL);
+  startLedger = await clampStart(server, startLedger);
   const set = new Set();
   let cursor;
   for (;;) {

@@ -1,0 +1,74 @@
+/* ============================================================================
+   UMBRA — design tokens (single source of truth)
+   The eclipse: total shadow (privacy) ringed by a corona (the view key),
+   over a setting sun (money in motion). Two-temperature dusk — never
+   dark-mode-plus-one-neon: the accent is always a warm→cool gradient, and a
+   distinct cool axis (periwinkle) carries the auditor's "lawful light".
+   ============================================================================ */
+:root {
+  /* — Shadow: backgrounds & surfaces (near-black with a violet cast, never #000) — */
+  --umbra: #0d0a12; /* deepest shadow — app background */
+  --penumbra: #1a1424; /* partial shadow — cards, raised surfaces */
+  --nightfall: #271d33; /* borders, hover, elevated edges */
+  --nightfall-2: #342743; /* stronger edge / pressed */
+
+  /* — The setting sun: warm accent gradient (CTAs, active, the disc) — */
+  --ember: #f2933c; /* sun's core, warm amber — primary action */
+  --coral: #ee6a4d; /* mid-horizon */
+  --rose: #e0556b; /* sunset rose — gradient end, send/active */
+
+  /* — The corona: the eclipse ring, the single brightest light, used sparingly — */
+  --corona: #ffe2a6; /* luminous pale gold — focus rings, key value, glow */
+
+  /* — The penumbra cool: dusk indigo, the AUDITOR / disclosure state — */
+  --periwinkle: #7c6bd6;
+  --periwinkle-lo: #2a2247; /* periwinkle-tinted surface for corona mode */
+
+  /* — Light: text — */
+  --daylight: #f4ecdd; /* primary text — last warm light, off-white */
+  --ash: #b6adc2; /* secondary text — muted lilac-grey (bumped for AA) */
+  --ash-dim: #8a8198; /* tertiary / disabled */
+
+  /* — Semantic — */
+  --danger: #e0556b; /* warm-tuned red (close to rose), never a clashing pure red */
+  --ok: var(--corona);
+
+  /* — Signature gradients — */
+  --horizon: linear-gradient(105deg, #f2933c 0%, #ee6a4d 38%, #e0556b 68%, #7c6bd6 100%);
+  --horizon-soft: linear-gradient(180deg, rgba(242, 147, 60, 0.16), rgba(124, 107, 214, 0.1));
+  /* the terminator: a soft day/night boundary, used instead of hairline rules */
+  --terminator: linear-gradient(90deg, transparent, rgba(255, 226, 166, 0.16) 18%, rgba(124, 107, 214, 0.18) 82%, transparent);
+
+  /* — Type — */
+  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --font-ui: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* type scale */
+  --t-hero: clamp(3rem, 13vw, 4.25rem); /* the balance figure */
+  --t-title: clamp(1.45rem, 6vw, 1.9rem);
+  --t-h: 1.15rem;
+  --t-body: 0.975rem;
+  --t-sm: 0.85rem;
+  --t-xs: 0.74rem;
+
+  /* — Spacing / radius — */
+  --gap: 16px;
+  --pad: 20px;
+  --r-sm: 10px;
+  --r: 16px;
+  --r-lg: 24px;
+  --r-pill: 999px;
+
+  /* — Motion — */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 140ms;
+  --dur: 280ms;
+  --dur-slow: 600ms;
+
+  /* — Elevation — */
+  --shadow-card: 0 18px 50px -28px rgba(0, 0, 0, 0.8);
+  --glow-corona: 0 0 0 1px rgba(255, 226, 166, 0.35), 0 0 24px -4px rgba(255, 226, 166, 0.35);
+  --glow-peri: 0 0 0 1px rgba(124, 107, 214, 0.45), 0 0 26px -6px rgba(124, 107, 214, 0.4);
+}

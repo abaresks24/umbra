@@ -1,30 +1,36 @@
-// Shielded wallet — Create/Connect flow, multi-asset, Phantom/Rabby-style UI.
-// Proving runs IN THE BROWSER (snarkjs over served WASM+zkey); the witness never
-// leaves the device. The relayer only submits public data.
+// Umbra — privacy wallet on Stellar. Proving runs IN THE BROWSER (snarkjs over
+// the served WASM+zkey); the witness never leaves the device. The relayer only
+// submits public data. The visual identity is the eclipse: balances rest in the
+// umbra (shadow) and a corona of light reveals them — to the owner on a tap, to
+// the auditor by view key. All wallet logic is unchanged; this is presentation.
 import * as snarkjs from "snarkjs";
-import { initPoseidon, poseidon, Note } from "../../client/lib/crypto";
+import { initPoseidon, Note } from "../../client/lib/crypto";
 import { buildTree } from "../../client/lib/tree";
 import { buildWitness } from "../../client/lib/transaction";
 import { initAuditor } from "../../client/lib/auditor";
 import { randomSeed, deriveIdentity, decodeAddress } from "../../client/lib/identity";
 import { fetchCommitEvents, fetchAuditEvents, fetchSpentNullifiers, nullifierHex, scanOwned, auditEnforced } from "../../client/lib/scan";
 import { proofToHex, publicToHex } from "../../scripts/bn254_snark_hex";
+import { createDisc } from "./disc.js";
 
 const WASM_URL = "/transfer.wasm", ZKEY_URL = "/transfer_final.zkey";
-const SEED_KEY = "shielded-seed";
-const $ = (id) => document.getElementById(id);
+const SEED_KEY = "umbra-seed";
+const $ = (s) => document.querySelector(s);
 
-let CFG, ME = null, notes = [], log = [], busy = false;
-let screen = "landing", tmpSeed = "", action = "shield", asset = 0;
+let CFG, ME = null, notes = [], log = [], history = [];
+let view = "landing", sheet = null, tmpSeed = "";
+let asset = 1, proving = false, revealBalance = false, reveals = new Set();
+let discCanvas = null, disc = null, heartbeat = 0;
 
+// ---------- amount helpers ----------
 const assetById = (id) => (CFG.assets || []).find((a) => Number(a.id) === Number(id));
 const decOf = (id) => assetById(id)?.decimals ?? 7;
-// human "1.5" <-> raw base-unit BigInt, per the asset's decimals
+const symOf = (id) => assetById(id)?.symbol || `#${id}`;
 function toRaw(human, d) {
   const s = String(human).trim();
-  if (s === "" || s === "." || !/^\d*\.?\d*$/.test(s)) throw new Error("invalid amount");
+  if (s === "" || s === "." || !/^\d*\.?\d*$/.test(s)) throw new Error("enter a valid amount");
   const [int, frac = ""] = s.split(".");
-  if (frac.length > d) throw new Error(`max ${d} decimals`);
+  if (frac.length > d) throw new Error(`${symOf(asset)} allows at most ${d} decimals`);
   return BigInt((int || "0") + frac.padEnd(d, "0"));
 }
 function toHuman(raw, d) {
@@ -32,42 +38,50 @@ function toHuman(raw, d) {
   const int = s.slice(0, s.length - d), frac = d ? s.slice(s.length - d).replace(/0+$/, "") : "";
   return frac ? `${int}.${frac}` : int;
 }
+const balanceOf = (id) => notes.filter((n) => Number(n.assetId) === Number(id)).reduce((a, n) => a + n.amount, 0n);
 const noteCount = (id) => notes.filter((n) => Number(n.assetId) === Number(id)).length;
-const say = (m) => { log.unshift(`${new Date().toLocaleTimeString().slice(0, 8)}  ${m}`); render(); };
-const short = (s, n = 6) => s.length > 2 * n + 3 ? `${s.slice(0, n)}…${s.slice(-n)}` : s;
+const short = (s, n = 5) => (s && s.length > 2 * n + 1 ? `${s.slice(0, n)}…${s.slice(-n)}` : s || "");
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// status line — patch in place during proving so the disc canvas is never torn down
+const say = (m) => { log.unshift(`${new Date().toLocaleTimeString().slice(0, 8)}  ${m}`); const el = $("#prove-status"); if (proving && el) el.textContent = m.replace(/^[^ ]+ +/, ""); else render(); };
 
 // ---------- identity ----------
+const histKey = () => `umbra-hist-${ME.seed.slice(0, 8)}`;
+const spentKey = () => `umbra-spent-${ME.seed.slice(0, 8)}`;
 function connect(seed) {
   ME = deriveIdentity(seed);
   localStorage.setItem(SEED_KEY, ME.seed);
-  screen = "wallet"; notes = []; render(); rescan();
+  history = JSON.parse(localStorage.getItem(histKey()) || "[]");
+  view = "home"; sheet = null; notes = []; revealBalance = false;
+  // heartbeat: keep balances converging even if testnet indexing lags the action
+  clearInterval(heartbeat);
+  heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000);
+  render(); rescan();
 }
-function disconnect() { localStorage.removeItem(SEED_KEY); ME = null; notes = []; screen = "landing"; render(); }
+function disconnect() { clearInterval(heartbeat); localStorage.removeItem(SEED_KEY); ME = null; notes = []; view = "landing"; sheet = null; render(); }
+function pushHistory(e) { history.unshift({ ...e, ts: Date.now() }); localStorage.setItem(histKey(), JSON.stringify(history.slice(0, 50))); }
 
 // ---------- chain ----------
-const spentKey = () => `shielded-spent-${ME.seed.slice(0, 8)}`;
 async function rescan() {
   if (!ME) return;
-  say("scanning chain…");
+  say("reading the horizon…");
   try {
     const [events, onchainSpent] = await Promise.all([
       fetchCommitEvents(CFG.poolId, CFG.startLedger),
-      fetchSpentNullifiers(CFG.poolId, CFG.startLedger), // authoritative spent-set
+      fetchSpentNullifiers(CFG.poolId, CFG.startLedger),
     ]);
     window.__tree = buildTree(events.sort((a, b) => a.index - b.index).map((e) => e.commitment));
-    // local set is only an optimistic hint to cover RPC indexing lag right after a spend
     const localSpent = new Set(JSON.parse(localStorage.getItem(spentKey()) || "[]"));
     notes = scanOwned(events, ME.viewSecret, ME.spend).filter((n) => {
       const h = nullifierHex(n.note.nullifier(n.index));
       return !onchainSpent.has(h) && !localSpent.has(h);
     });
-    say(`found ${notes.length} note(s)`);
-  } catch (e) { say("scan error: " + (e.message || e)); }
-  render();
+    say(`${notes.length} note${notes.length === 1 ? "" : "s"} in shadow`);
+  } catch (e) { say("could not reach the network — retrying soon"); }
+  if (!proving) render();
 }
-// RPC event indexing lags the tx by ~10-30s; poll a few times so balances catch up.
 function scheduleRescans() { [6000, 14000, 25000, 40000].forEach((ms) => setTimeout(rescan, ms)); }
-const balanceOf = (id) => notes.filter((n) => Number(n.assetId) === Number(id)).reduce((a, n) => a + n.amount, 0n);
 function markSpent(ns) {
   const s = new Set(JSON.parse(localStorage.getItem(spentKey()) || "[]"));
   ns.forEach((n) => s.add(nullifierHex(n.note.nullifier(n.index))));
@@ -77,36 +91,29 @@ function selectInputs(amount, assetId) {
   const mine = notes.filter((n) => Number(n.assetId) === Number(assetId)).sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const chosen = []; let sum = 0n;
   for (const n of mine) { if (sum >= amount) break; chosen.push(n); sum += n.amount; }
-  if (sum < amount) throw new Error(`insufficient ${assetById(assetId).symbol} balance`);
-  if (chosen.length > 2) throw new Error("amount needs >2 notes — consolidate first");
+  if (sum < amount) throw new Error(`not enough ${symOf(assetId)} in shadow`);
+  if (chosen.length > 2) throw new Error("this amount spans more than 2 notes — merge first");
   return { chosen, sum };
 }
 
 async function proveAndSubmit(params, { recipient, extAmount, assetId }) {
-  say("generating zero-knowledge proof in your browser…");
+  say("entering the umbra — proving privately…");
   const r = buildWitness({ ...params, assetId, auditor: { pubX: CFG.auditorPubX, pubY: CFG.auditorPubY } });
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(r.witness, WASM_URL, ZKEY_URL);
-  say("proof ready — submitting…");
+  say("proof formed — crossing the horizon…");
   const res = await fetch("/api/submit", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      proof: proofToHex(proof), public: publicToHex(publicSignals),
-      caller: CFG.userAddr, recipient, extAmount: String(extAmount), fee: "0", enc1: r.enc1, enc2: r.enc2,
-    }),
+    body: JSON.stringify({ proof: proofToHex(proof), public: publicToHex(publicSignals), caller: CFG.userAddr, recipient, extAmount: String(extAmount), fee: "0", enc1: r.enc1, enc2: r.enc2 }),
   });
   const j = await res.json();
   if (!j.ok) throw new Error(j.error);
-  say("✅ confirmed on Stellar testnet");
+  say("settled in shadow");
 }
-
 const enc = (recipients) => ({ senderViewPub: ME.viewPub, recipients });
 
 async function doShield(amount, assetId) {
   const note = new Note({ amount, assetId, owner: ME.spend });
-  await proveAndSubmit({
-    tree: window.__tree, inputs: [], outputs: [note], publicAmount: amount,
-    extData: { recipient: CFG.userAddr, extAmount: String(amount), fee: "0" }, enc: enc([ME.viewPub]),
-  }, { recipient: CFG.userAddr, extAmount: amount, assetId });
+  await proveAndSubmit({ tree: window.__tree, inputs: [], outputs: [note], publicAmount: amount, extData: { recipient: CFG.userAddr, extAmount: String(amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: amount, assetId });
   scheduleRescans();
 }
 async function doSend(amount, assetId, addr) {
@@ -114,188 +121,299 @@ async function doSend(amount, assetId, addr) {
   const rcpt = decodeAddress(addr);
   const toR = new Note({ amount, assetId, owner: rcpt.spendPub });
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
-  await proveAndSubmit({
-    tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })),
-    outputs: [toR, change], publicAmount: 0n,
-    extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([rcpt.viewPub, ME.viewPub]),
-  }, { recipient: CFG.userAddr, extAmount: 0, assetId });
+  await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [toR, change], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([rcpt.viewPub, ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
   markSpent(chosen); scheduleRescans();
 }
 async function doUnshield(amount, assetId, stellarAddr) {
   const { chosen, sum } = selectInputs(amount, assetId);
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
-  await proveAndSubmit({
-    tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })),
-    outputs: [change], publicAmount: -amount,
-    extData: { recipient: stellarAddr, extAmount: String(-amount), fee: "0" }, enc: enc([ME.viewPub]),
-  }, { recipient: stellarAddr, extAmount: -amount, assetId });
+  await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [change], publicAmount: -amount, extData: { recipient: stellarAddr, extAmount: String(-amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: stellarAddr, extAmount: -amount, assetId });
   markSpent(chosen); scheduleRescans();
 }
-
-// Merge the two smallest notes of an asset into one (anti-dust). The pool is
-// 2-in/2-out, so this halves note count per call; repeat to fully consolidate.
 async function doConsolidate(assetId) {
   const mine = notes.filter((n) => Number(n.assetId) === Number(assetId)).sort((a, b) => (a.amount < b.amount ? -1 : 1));
   if (mine.length < 2) throw new Error("nothing to merge");
   const [n1, n2] = mine;
   const merged = new Note({ amount: n1.amount + n2.amount, assetId, owner: ME.spend });
-  await proveAndSubmit({
-    tree: window.__tree, inputs: [{ note: n1.note, index: n1.index }, { note: n2.note, index: n2.index }],
-    outputs: [merged], publicAmount: 0n,
-    extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([ME.viewPub]),
-  }, { recipient: CFG.userAddr, extAmount: 0, assetId });
+  await proveAndSubmit({ tree: window.__tree, inputs: [{ note: n1.note, index: n1.index }, { note: n2.note, index: n2.index }], outputs: [merged], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
   markSpent([n1, n2]); scheduleRescans();
 }
 
-async function runAudit(priv) {
-  const events = await fetchCommitEvents(CFG.poolId, CFG.startLedger);
-  const auditMap = await fetchAuditEvents(CFG.poolId, CFG.startLedger);
-  const rows = auditEnforced(events, auditMap, priv);
-  $("audit-out").innerHTML = rows.map((r) => r.opaque
-    ? `<tr><td>#${r.index}</td><td colspan=2 class="mut">opaque</td></tr>`
-    : `<tr><td>#${r.index}</td><td><b>${toHuman(r.amount, decOf(r.assetId))}</b> ${assetById(r.assetId)?.symbol || `asset ${r.assetId}`}</td><td class="mut">${short(r.owner, 8)}</td></tr>`).join("");
+// orchestrated action runner — drives the occultation around the proof
+async function runAction(kind, args) {
+  if (proving) return;
+  proving = true; render(); disc?.occult();
+  try {
+    await rescan();
+    if (kind === "deposit") await doShield(args.amt, args.assetId);
+    else if (kind === "send") await doSend(args.amt, args.assetId, args.addr);
+    else if (kind === "withdraw") await doUnshield(args.amt, args.assetId, args.addr);
+    else if (kind === "merge") await doConsolidate(args.assetId);
+    if (kind !== "merge") pushHistory({ dir: kind, amount: args.amt.toString(), assetId: args.assetId });
+    disc?.settle();
+    sheet = null;
+  } catch (e) { say(e.message || String(e)); disc?.idle(); proving = false; render(); return; }
+  proving = false;
+  setTimeout(() => disc?.idle(), 1400);
+  render();
 }
 
-// ---------- UI ----------
-const logo = `<div class="logo"><span class="shield">🛡</span> <b>Shielded</b></div>`;
+async function runAudit(priv) {
+  const out = $("#audit-out");
+  out.innerHTML = `<div class="muted small">reconstructing the ledger…</div>`;
+  try {
+    const [events, auditMap] = await Promise.all([fetchCommitEvents(CFG.poolId, CFG.startLedger), fetchAuditEvents(CFG.poolId, CFG.startLedger)]);
+    const rows = auditEnforced(events, auditMap, priv).filter((r) => r.opaque || r.amount > 0n);
+    if (!rows.length) { out.innerHTML = `<div class="muted small">No notes to disclose yet.</div>`; return; }
+    out.innerHTML = rows.map((r) => r.opaque
+      ? `<div class="arow"><span class="leaf">leaf ${r.index}</span><span class="muted">sealed</span><span></span></div>`
+      : `<div class="arow lit"><span class="leaf">leaf ${r.index}</span><span class="amt">${esc(toHuman(r.amount, decOf(r.assetId)))} ${esc(symOf(r.assetId))}</span><span class="owner">${esc(short(r.owner, 6))}</span></div>`).join("");
+  } catch (e) { out.innerHTML = `<div class="muted small">${esc(e.message || "could not read events")}</div>`; }
+}
+
+// ============================ rendering ============================
+const mark = "•••";
+const brand = `<div class="brand"><span class="eclipse"></span>Umbra</div>`;
+
+function discStage(size) {
+  return `<div class="disc-stage" style="--disc:${size}"><div class="disc-mount" id="disc-mount"></div></div>`;
+}
+// move the single persistent canvas into the active stage (no GL context churn)
+function placeDisc() {
+  const mount = $("#disc-mount");
+  if (!mount) return;
+  if (!discCanvas) { discCanvas = document.createElement("canvas"); discCanvas.className = "disc"; }
+  if (discCanvas.parentElement !== mount) mount.appendChild(discCanvas);
+  if (!disc) disc = createDisc(discCanvas);
+  disc.reveal(revealBalance || proving);
+}
 
 function render() {
-  const app = $("app");
-  if (!CFG) { app.innerHTML = `<div class="center"><div class="spinner"></div></div>`; return; }
+  const app = $("#app");
+  if (!CFG) { app.innerHTML = `<div class="screen center">${discStage(180)}</div>`; placeDisc(); return; }
+  if (CFG.error) { app.innerHTML = `<div class="screen center"><p class="muted">${esc(CFG.error)}</p></div>`; return; }
 
-  if (screen === "landing") {
-    app.innerHTML = `<div class="center"><div class="hero">
-      ${logo}
-      <h1>Private payments<br/>on Stellar</h1>
-      <p class="sub">Amounts and counterparties hidden on-chain. Auditable by design.</p>
-      <button class="btn primary big" id="go-create">Create a new wallet</button>
-      <button class="btn ghost big" id="go-connect">I already have a private key</button>
-      <div class="net-pill">Stellar testnet</div>
-    </div></div>`;
-    $("go-create").onclick = () => { tmpSeed = randomSeed(); screen = "create"; render(); };
-    $("go-connect").onclick = () => { screen = "connect"; render(); };
-    return;
-  }
+  if (proving) { app.innerHTML = provingView(); placeDisc(); disc?.reveal(true); return; }
+  if (view === "landing") return void (app.innerHTML = landingView(), wireLanding());
+  if (view === "create") return void (app.innerHTML = createView(), wireCreate());
+  if (view === "connect") return void (app.innerHTML = connectView(), wireConnect());
+  if (view === "auditor") return void (app.innerHTML = auditorView(), wireAuditor());
 
-  if (screen === "create") {
-    app.innerHTML = `<div class="center"><div class="card narrow">
-      ${logo}
-      <h2>Your private key</h2>
-      <p class="sub">This is the only way to access your wallet. Save it somewhere safe — we can't recover it.</p>
-      <div class="keybox"><code id="seedval">${tmpSeed}</code><button class="btn tiny" id="copyseed">Copy</button></div>
-      <label class="check"><input type="checkbox" id="saved"/> I've saved my private key</label>
-      <button class="btn primary big" id="open" disabled>Open wallet</button>
-      <button class="btn link" id="back">← Back</button>
-    </div></div>`;
-    $("copyseed").onclick = () => { navigator.clipboard.writeText(tmpSeed); $("copyseed").textContent = "Copied!"; };
-    $("saved").onchange = (e) => { $("open").disabled = !e.target.checked; };
-    $("open").onclick = () => connect(tmpSeed);
-    $("back").onclick = () => { screen = "landing"; render(); };
-    return;
-  }
-
-  if (screen === "connect") {
-    app.innerHTML = `<div class="center"><div class="card narrow">
-      ${logo}
-      <h2>Connect wallet</h2>
-      <p class="sub">Paste your private key to access your wallet.</p>
-      <textarea id="seedin" rows="3" placeholder="your private key (hex)"></textarea>
-      <button class="btn primary big" id="do-connect">Connect</button>
-      <button class="btn link" id="back">← Back</button>
-    </div></div>`;
-    $("do-connect").onclick = () => { try { connect($("seedin").value); } catch (e) { say("❌ " + e.message); } };
-    $("back").onclick = () => { screen = "landing"; render(); };
-    return;
-  }
-
-  // ---- wallet ----
-  const assets = CFG.assets || [];
-  const recipField = action === "send"
-    ? `<input id="f-addr" placeholder="recipient wallet address (shld_…)"/>`
-    : action === "unshield" ? `<input id="f-addr" placeholder="public Stellar address (G…)" value="${CFG.recipAddr || ""}"/>` : "";
-  app.innerHTML = `
-    <header class="topbar">
-      ${logo}
-      <div class="right">
-        <span class="net-pill">testnet</span>
-        <button class="chip" id="copyaddr" title="copy your address">${short(ME.address, 8)} ⧉</button>
-        <button class="btn tiny ghost" id="disc">Disconnect</button>
-      </div>
-    </header>
-    <div class="wrap">
-      <section class="balances">
-        ${assets.map((a) => `<div class="asset-card">
-          <div class="asset-top"><span class="asset-ico">${a.symbol[0]}</span><span>${a.symbol}</span>
-            ${noteCount(a.id) > 1 ? `<button class="merge" data-merge="${a.id}" title="merge ${noteCount(a.id)} notes into fewer">⤵ ${noteCount(a.id)}</button>` : ""}</div>
-          <div class="asset-bal">${toHuman(balanceOf(a.id), a.decimals)}<small>shielded</small></div>
-        </div>`).join("")}
-      </section>
-
-      <section class="card pay">
-        <div class="seg">
-          ${["shield", "send", "unshield"].map((t) => `<button class="${action === t ? "on" : ""}" data-act="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
-        </div>
-        <div class="row">
-          <select id="f-asset">${assets.map((a) => `<option value="${a.id}" ${a.id === asset ? "selected" : ""}>${a.symbol}</option>`).join("")}</select>
-          <input id="f-amt" type="number" placeholder="0.0" min="0"/>
-        </div>
-        ${recipField}
-        <button class="btn primary big" id="f-go" ${busy ? "disabled" : ""}>${busy ? "Working…" : action[0].toUpperCase() + action.slice(1)}</button>
-        <p class="hint">${action === "shield" ? "Deposit public tokens into the shielded pool."
-          : action === "send" ? "Send privately — amount & parties hidden on-chain."
-          : "Withdraw from the pool to a public address."}</p>
-      </section>
-
-      <section class="card">
-        <div class="card-h">Activity</div>
-        <pre class="logbox">${log.slice(0, 10).join("\n") || "—"}</pre>
-      </section>
-
-      <section class="card">
-        <div class="card-h">🔍 Auditor view <span class="mut">— enforced in-circuit</span></div>
-        <p class="hint">Paste the auditor's private key to reconstruct every note (provably complete).</p>
-        <textarea id="audit-key" rows="2" placeholder="auditor private key"></textarea>
-        <button class="btn ghost" id="b-audit">Reconstruct ledger</button>
-        <table class="audit"><thead><tr><th>leaf</th><th>amount</th><th>owner</th></tr></thead><tbody id="audit-out"></tbody></table>
-      </section>
-    </div>`;
-
-  $("disc").onclick = disconnect;
-  $("copyaddr").onclick = () => { navigator.clipboard.writeText(ME.address); $("copyaddr").textContent = "copied!"; setTimeout(render, 800); };
-  app.querySelectorAll(".seg button").forEach((b) => b.onclick = () => { action = b.dataset.act; render(); });
-  $("f-asset").onchange = (e) => { asset = Number(e.target.value); };
-  app.querySelectorAll(".merge").forEach((btn) => btn.onclick = async () => {
-    if (busy) return; busy = true; render();
-    try { await rescan(); await doConsolidate(Number(btn.dataset.merge)); } catch (e) { say("❌ " + (e.message || e)); }
-    finally { busy = false; render(); }
-  });
-  $("f-go").onclick = async () => {
-    // capture form values BEFORE render() (which rebuilds the inputs)
-    const a = Number($("f-asset").value);
-    let amt; try { amt = toRaw($("f-amt").value || "0", decOf(a)); } catch (e) { say("❌ " + e.message); return; }
-    const addr = $("f-addr") ? $("f-addr").value.trim() : "";
-    if (amt <= 0n) { say("❌ enter an amount"); return; }
-    if (action !== "shield" && !addr) { say("❌ enter a recipient address"); return; }
-    if (busy) return;
-    busy = true; render();
-    try {
-      await rescan(); // ensure the Merkle tree + notes reflect current chain state
-      if (action === "shield") await doShield(amt, a);
-      else if (action === "send") await doSend(amt, a, addr);
-      else await doUnshield(amt, a, addr);
-    } catch (e) { say("❌ " + (e.message || e)); }
-    finally { busy = false; render(); }
-  };
-  $("b-audit").onclick = async () => { try { await runAudit($("audit-key").value.trim()); } catch (e) { say("❌ " + e.message); } };
+  app.innerHTML = homeView() + (sheet ? sheetView() : "");
+  placeDisc();
+  wireHome();
+  if (sheet) wireSheet();
 }
 
+// ---- landing ----
+const landingView = () => `<div class="screen center landing">
+  ${discStage(150)}
+  ${brand}
+  <h1 class="title">Your money,<br/>kept in shadow.</h1>
+  <p class="lede">Private payments on Stellar. Amounts and counterparties rest in the umbra — disclosed only to an auditor who holds the key.</p>
+  <div class="stack">
+    <button class="btn primary" id="go-create">Create wallet</button>
+    <button class="btn ghost" id="go-connect">I have a private key</button>
+  </div>
+  <span class="net">Stellar testnet</span>
+</div>`;
+function wireLanding() {
+  placeDisc(); disc?.idle();
+  $("#go-create").onclick = () => { tmpSeed = randomSeed(); view = "create"; render(); };
+  $("#go-connect").onclick = () => { view = "connect"; render(); };
+}
+
+const createView = () => `<div class="screen center pane">
+  ${brand}
+  <h2 class="title sm">Your private key</h2>
+  <p class="lede">This single key is the only way back to your wallet. Keep it somewhere safe — it cannot be recovered.</p>
+  <div class="keybox"><code id="seedval">${esc(tmpSeed)}</code></div>
+  <button class="btn ghost wide" id="copyseed">Copy key</button>
+  <label class="check"><input type="checkbox" id="saved"/> <span>I've saved my private key</span></label>
+  <button class="btn primary" id="open" disabled>Open wallet</button>
+  <button class="btn link" id="back">Back</button>
+</div>`;
+function wireCreate() {
+  $("#copyseed").onclick = () => { navigator.clipboard?.writeText(tmpSeed); $("#copyseed").textContent = "Copied"; };
+  $("#saved").onchange = (e) => { $("#open").disabled = !e.target.checked; };
+  $("#open").onclick = () => connect(tmpSeed);
+  $("#back").onclick = () => { view = "landing"; render(); };
+}
+
+const connectView = () => `<div class="screen center pane">
+  ${brand}
+  <h2 class="title sm">Connect wallet</h2>
+  <p class="lede">Paste your private key to step back into the shadow.</p>
+  <textarea id="seedin" class="field mono" rows="3" placeholder="private key"></textarea>
+  <button class="btn primary" id="do-connect">Connect</button>
+  <button class="btn link" id="back">Back</button>
+</div>`;
+function wireConnect() {
+  $("#do-connect").onclick = () => { try { connect($("#seedin").value); } catch (e) { toast(e.message); } };
+  $("#back").onclick = () => { view = "landing"; render(); };
+}
+
+// ---- home ----
+function homeView() {
+  const assets = CFG.assets || [];
+  const bal = revealBalance ? toHuman(balanceOf(asset), decOf(asset)) : mark;
+  const nc = noteCount(asset);
+  return `<div class="screen home">
+    <header class="bar">
+      ${brand}
+      <div class="bar-r">
+        <button class="chip" id="copyaddr" title="copy your address">${esc(short(ME.address, 5))}</button>
+        <button class="icon-btn" id="disconnect" title="disconnect" aria-label="disconnect">⏻</button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="disc-stage" style="--disc:300">
+        <div class="disc-mount" id="disc-mount"></div>
+        <button class="hero-balance ${revealBalance ? "lit" : ""}" id="reveal-bal" aria-label="reveal balance">
+          <span class="amt">${esc(bal)}</span>
+          <span class="sym">${esc(symOf(asset))}</span>
+        </button>
+      </div>
+      <p class="hero-cap">${revealBalance ? "Tap to return to shadow" : "Your balance rests in shadow — tap to reveal"}</p>
+      ${assets.length > 1 ? `<div class="asset-tabs">${assets.map((a) => `<button class="asset-tab ${a.id === asset ? "on" : ""}" data-asset="${a.id}">${esc(a.symbol)}</button>`).join("")}</div>` : ""}
+      ${nc > 1 ? `<button class="merge-link" id="merge">Merge ${nc} notes</button>` : ""}
+    </section>
+
+    <nav class="actions">
+      <button class="act" data-sheet="send"><span class="act-i">↗</span>Send</button>
+      <button class="act" data-sheet="deposit"><span class="act-i">↧</span>Deposit</button>
+      <button class="act" data-sheet="withdraw"><span class="act-i">↥</span>Withdraw</button>
+      <button class="act" data-sheet="receive"><span class="act-i">◎</span>Receive</button>
+    </nav>
+
+    <div class="terminator"></div>
+
+    <section class="activity">
+      <div class="sec-h"><span>Activity</span><button class="link sm" id="go-audit">Auditor view</button></div>
+      ${history.length ? history.slice(0, 8).map(activityRow).join("") : `<p class="empty">Nothing has crossed the horizon yet.</p>`}
+    </section>
+  </div>`;
+}
+function activityRow(e, i) {
+  const dirIcon = { deposit: "↧", withdraw: "↥", send: "↗" }[e.dir] || "◐";
+  const lit = reveals.has("h" + i);
+  const amt = lit ? `${toHuman(e.amount, decOf(e.assetId))} ${symOf(e.assetId)}` : mark;
+  const label = { deposit: "Deposited", withdraw: "Withdrew", send: "Sent" }[e.dir] || e.dir;
+  const when = new Date(e.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return `<button class="arow row-reveal ${lit ? "lit" : ""}" data-rev="h${i}">
+    <span class="ecl ${e.dir}">${dirIcon}</span>
+    <span class="arow-main"><span class="dir">${label}</span><span class="when">${esc(when)}</span></span>
+    <span class="amt">${esc(amt)}</span>
+  </button>`;
+}
+function wireHome() {
+  placeDisc();
+  $("#disconnect").onclick = disconnect;
+  $("#copyaddr").onclick = () => { navigator.clipboard?.writeText(ME.address); toast("Address copied"); };
+  $("#reveal-bal").onclick = () => { revealBalance = !revealBalance; disc?.reveal(revealBalance); render(); };
+  $("#go-audit").onclick = () => { view = "auditor"; render(); };
+  const m = $("#merge"); if (m) m.onclick = () => runAction("merge", { assetId: asset });
+  document.querySelectorAll(".asset-tab").forEach((b) => b.onclick = () => { asset = Number(b.dataset.asset); revealBalance = false; render(); });
+  document.querySelectorAll(".act").forEach((b) => b.onclick = () => { sheet = b.dataset.sheet; render(); });
+  document.querySelectorAll(".row-reveal").forEach((b) => b.onclick = () => { const k = b.dataset.rev; reveals.has(k) ? reveals.delete(k) : reveals.add(k); render(); });
+}
+
+// ---- sheets (send / deposit / withdraw / receive) ----
+function sheetView() {
+  const assets = CFG.assets || [];
+  const sel = assets.length > 1 ? `<label class="lbl">Asset</label><div class="seg">${assets.map((a) => `<button class="seg-b ${a.id === asset ? "on" : ""}" data-sasset="${a.id}">${esc(a.symbol)}</button>`).join("")}</div>` : "";
+  const amount = `<label class="lbl">Amount</label><input id="s-amt" class="field" inputmode="decimal" placeholder="0.0" autocomplete="off"/>`;
+  let title, body, btn, hint;
+  if (sheet === "send") {
+    title = "Send in shadow"; btn = "Send";
+    hint = "Amount and recipient stay hidden on-chain.";
+    body = `${sel}<label class="lbl">Recipient</label><input id="s-addr" class="field mono" placeholder="umbra address (shld_…)" autocomplete="off"/>${amount}`;
+  } else if (sheet === "deposit") {
+    title = "Into nightfall"; btn = "Deposit";
+    hint = "Public tokens enter the umbra and become private.";
+    body = `${sel}${amount}`;
+  } else if (sheet === "withdraw") {
+    title = "Toward daybreak"; btn = "Withdraw";
+    hint = "Value returns to the public light.";
+    body = `${sel}<label class="lbl">Destination</label><input id="s-addr" class="field mono" placeholder="Stellar address (G…)" value="${esc(CFG.recipAddr || "")}" autocomplete="off"/>${amount}`;
+  } else {
+    title = "A point of light"; btn = null;
+    hint = "Share this address so others can find you in the dark.";
+    body = `<div class="addr-box"><code>${esc(ME.address)}</code></div>`;
+  }
+  return `<div class="sheet-scrim" id="scrim"><div class="sheet" role="dialog" aria-label="${esc(title)}">
+    <div class="sheet-grip"></div>
+    <h3 class="sheet-title">${title}</h3>
+    <p class="sheet-hint">${hint}</p>
+    ${body}
+    <div class="sheet-actions">
+      ${btn ? `<button class="btn primary" id="s-go">${btn}</button>` : `<button class="btn primary" id="s-copy">Copy</button>`}
+      <button class="btn ghost" id="s-cancel">${btn ? "Cancel" : "Done"}</button>
+    </div>
+  </div></div>`;
+}
+function wireSheet() {
+  $("#scrim").onclick = (e) => { if (e.target.id === "scrim") { sheet = null; render(); } };
+  $("#s-cancel").onclick = () => { sheet = null; render(); };
+  document.querySelectorAll(".seg-b").forEach((b) => b.onclick = () => { asset = Number(b.dataset.sasset); render(); });
+  const copy = $("#s-copy"); if (copy) copy.onclick = () => { navigator.clipboard?.writeText(ME.address); copy.textContent = "Copied"; };
+  const go = $("#s-go"); if (!go) return;
+  go.onclick = () => {
+    let amt; try { amt = toRaw($("#s-amt").value || "0", decOf(asset)); } catch (e) { return toast(e.message); }
+    if (amt <= 0n) return toast("Enter an amount");
+    const addr = $("#s-addr") ? $("#s-addr").value.trim() : "";
+    if (sheet !== "deposit" && !addr) return toast("Enter a destination");
+    runAction(sheet, { amt, assetId: asset, addr });
+  };
+}
+
+// ---- auditor (corona mode — cool, lawful light) ----
+const auditorView = () => `<div class="screen auditor">
+  <header class="bar">
+    <button class="icon-btn" id="audit-back" aria-label="back">←</button>
+    <div class="brand"><span class="eclipse cool"></span>Corona</div>
+    <span></span>
+  </header>
+  <div class="aud-intro">
+    <h2 class="title sm">Lawful light</h2>
+    <p class="lede">The view key breaks one ring of light through the shadow. With it, an auditor reconstructs every note — amounts and parties — while the public sees nothing. Disclosure is enforced inside the proof itself.</p>
+  </div>
+  <label class="lbl">Auditor private key</label>
+  <textarea id="audit-key" class="field mono" rows="2" placeholder="auditor key"></textarea>
+  <button class="btn cool" id="b-audit">Reveal ledger</button>
+  <div class="aud-out" id="audit-out"><p class="empty cool">The ledger waits in shadow.</p></div>
+</div>`;
+function wireAuditor() {
+  disc?.idle();
+  $("#audit-back").onclick = () => { view = "home"; render(); };
+  $("#b-audit").onclick = () => runAudit($("#audit-key").value.trim());
+}
+
+// ---- proving (the occultation) ----
+const provingView = () => `<div class="screen center proving">
+  ${discStage(300)}
+  <p class="prove-status" id="prove-status">entering the umbra…</p>
+  <p class="prove-sub">Generating your zero-knowledge proof. This happens on your device.</p>
+</div>`;
+
+// ---- toast ----
+let toastT = 0;
+function toast(msg) {
+  let el = $("#toast");
+  if (!el) { el = document.createElement("div"); el.id = "toast"; document.body.appendChild(el); }
+  el.textContent = msg; el.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("show"), 2600);
+}
+
+// ============================ boot ============================
 (async () => {
   await initPoseidon();
   await initAuditor();
-  CFG = await (await fetch("/api/config")).json();
-  if (CFG.error) { $("app").innerHTML = `<div class="center"><pre>${CFG.error}</pre></div>`; return; }
+  try { CFG = await (await fetch("/api/config")).json(); } catch { CFG = { error: "Run the relayer (npm run web:server) and init the pool (npm run web:init)." }; }
+  if (CFG.assets?.length) asset = CFG.assets[0].id;
   const saved = localStorage.getItem(SEED_KEY);
-  if (saved) { try { ME = deriveIdentity(saved); screen = "wallet"; } catch { localStorage.removeItem(SEED_KEY); } }
+  if (saved && !CFG.error) { try { ME = deriveIdentity(saved); history = JSON.parse(localStorage.getItem(histKey()) || "[]"); view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
   render();
   if (ME) rescan();
 })();
