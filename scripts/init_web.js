@@ -28,13 +28,15 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
   const ip = (a) => sh(`stellar contract invoke --id ${poolId} --source shield --network testnet -- ${a}`);
   ip(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
 
-  // register the assets the pool supports (query each token's decimals)
-  const decimalsOf = (sac) => {
-    try { return Number(sh(`stellar contract invoke --id ${sac} --source shield --network testnet -- decimals`).replace(/"/g, "")); }
-    catch { return 7; } // classic Stellar assets default to 7
-  };
-  const assets = [{ id: 1, symbol: "USDC", sac: e.USDC_SAC, decimals: decimalsOf(e.USDC_SAC) }];
-  if (e.WETH_SAC) assets.push({ id: 2, symbol: "WETH", sac: e.WETH_SAC, decimals: decimalsOf(e.WETH_SAC) });
+  // Asset 1 = the REAL Circle testnet USDC (so users fund their own Freighter
+  // wallet from faucet.circle.com). Asset 2 = our self-issued WETH (issuer
+  // top-up; used for headless tests since Circle's faucet needs a human).
+  const CIRCLE_USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+  const CIRCLE_USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  const assets = [
+    { id: 1, symbol: "USDC", sac: CIRCLE_USDC_SAC, decimals: 7, code: "USDC", issuer: CIRCLE_USDC_ISSUER, faucet: "circle" },
+  ];
+  if (e.WETH_SAC) assets.push({ id: 2, symbol: "WETH", sac: e.WETH_SAC, decimals: 7, code: "WETH", issuer: e.USDC_ISSUER, faucet: "issuer" });
   for (const a of assets) ip(`register_asset --asset_id ${a.id} --token ${a.sac}`);
   console.log("registered assets:", assets.map((a) => `${a.id}=${a.symbol}`).join(", "));
 
@@ -48,6 +50,9 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
     assets, userAddr: e.USER_ADDR, recipAddr: e.RECIP_ADDR,
     auditorPubX: auditor.pubX, auditorPubY: auditor.pubY, startLedger,
     rpc: "https://soroban-testnet.stellar.org",
+    networkPassphrase: "Test SDF Network ; September 2015",
+    friendbot: "https://friendbot.stellar.org",
+    circleFaucet: "https://faucet.circle.com",
   };
   fs.writeFileSync(path.join(B, "web_config.json"), JSON.stringify(config, null, 2));
 

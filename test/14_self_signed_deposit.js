@@ -19,7 +19,9 @@ const B = path.join(ROOT, "circuits/build");
 const cfg = JSON.parse(fs.readFileSync(path.join(B, "web_config.json"), "utf8"));
 const env = Object.fromEntries(fs.readFileSync(path.join(B, "usdc.env"), "utf8").trim().split("\n").map((l) => l.split("=")));
 const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
-const usdc = cfg.assets.find((a) => a.symbol === "USDC");
+// Use the self-issued asset (faucet:"issuer", e.g. WETH) — Circle USDC can't be
+// funded headlessly. The deposit mechanism is identical for any SAC.
+const usdc = cfg.assets.find((a) => a.faucet === "issuer") || cfg.assets.find((a) => a.symbol === "WETH");
 const bal = (addr) => BigInt(sh(`stellar contract invoke --id ${usdc.sac} --source shield --network testnet -- balance --id ${addr}`).replace(/"/g, ""));
 let pass = 0, fail = 0;
 const ck = (n, c) => { console.log(`  ${c ? "✅" : "❌"} ${n}`); c ? pass++ : fail++; };
@@ -33,8 +35,8 @@ const ck = (n, c) => { console.log(`  ${c ? "✅" : "❌"} ${n}`); c ? pass++ : 
   sh(`stellar keys generate ${alias} --network testnet --fund`);
   const userAddr = sh(`stellar keys address ${alias}`);
   const userKp = Keypair.fromSecret(sh(`stellar keys show ${alias}`));
-  sh(`stellar tx new change-trust --source ${alias} --line USDC:${env.USDC_ISSUER} --network testnet`);
-  sh(`stellar tx new payment --source usdc-issuer --destination ${userAddr} --asset USDC:${env.USDC_ISSUER} --amount 1000000000 --network testnet`); // 100 USDC
+  sh(`stellar tx new change-trust --source ${alias} --line ${usdc.code}:${usdc.issuer} --network testnet`);
+  sh(`stellar tx new payment --source usdc-issuer --destination ${userAddr} --asset ${usdc.code}:${usdc.issuer} --amount 1000000000 --network testnet`); // 100 USDC
   console.log("  fresh user:", userAddr, "(100 USDC, XLM funded)");
 
   const userBefore = bal(userAddr), poolBefore = bal(cfg.poolId);

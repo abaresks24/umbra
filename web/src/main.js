@@ -11,6 +11,8 @@ import { initAuditor } from "../../client/lib/auditor";
 import { randomSeed, deriveIdentity, decodeAddress } from "../../client/lib/identity";
 import { fetchCommitEvents, fetchAuditEvents, fetchSpentNullifiers, nullifierHex, scanOwned, auditEnforced } from "../../client/lib/scan";
 import { proofToHex, publicToHex } from "../../scripts/bn254_snark_hex";
+import { submitTransact } from "../../client/lib/soroban";
+import { connectFreighter, assetStatus, addTrustline, freighterSign, freighterInstalled } from "../../client/lib/wallet-connect";
 import { createDisc } from "./disc.js";
 
 const WASM_URL = "/transfer.wasm", ZKEY_URL = "/transfer_final.zkey";
@@ -21,6 +23,7 @@ let CFG, ME = null, notes = [], log = [], history = [];
 let view = "landing", sheet = null, tmpSeed = "";
 let asset = 1, proving = false, revealBalance = false, reveals = new Set();
 let discCanvas = null, disc = null, heartbeat = 0;
+let fr = null; // { address, status: {hasTrust, raw} } — connected Freighter account
 
 // ---------- amount helpers ----------
 const assetById = (id) => (CFG.assets || []).find((a) => Number(a.id) === Number(id));
@@ -137,6 +140,49 @@ async function doConsolidate(assetId) {
   const merged = new Note({ amount: n1.amount + n2.amount, assetId, owner: ME.spend });
   await proveAndSubmit({ tree: window.__tree, inputs: [{ note: n1.note, index: n1.index }, { note: n2.note, index: n2.index }], outputs: [merged], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
   markSpent([n1, n2]); scheduleRescans();
+}
+
+// ---------- Freighter (self-custodial deposits) ----------
+async function refreshFr() {
+  if (!fr) return;
+  const a = assetById(asset);
+  try { fr.status = await assetStatus(fr.address, a.code, a.issuer, a.decimals); } catch { fr.status = { hasTrust: false, raw: 0n }; }
+}
+async function doConnectFreighter() {
+  if (!(await freighterInstalled())) { toast("Install the Freighter wallet extension"); window.open("https://www.freighter.app/", "_blank"); return; }
+  fr = { address: await connectFreighter(), status: null };
+  await refreshFr();
+  render();
+}
+
+// Deposit (shield) — signed and paid BY THE USER via Freighter. caller == the
+// user's Stellar account; their own public USDC moves into the pool.
+async function runDeposit(amt, assetId) {
+  if (proving) return;
+  if (!fr) { toast("Connect Freighter first"); return; }
+  proving = true; render(); disc?.occult();
+  try {
+    await rescan();
+    const note = new Note({ amount: amt, assetId, owner: ME.spend });
+    const r = buildWitness({
+      tree: window.__tree, inputs: [], outputs: [note], publicAmount: amt, assetId,
+      extData: { recipient: fr.address, extAmount: String(amt), fee: "0" }, enc: enc([ME.viewPub]),
+      auditor: { pubX: CFG.auditorPubX, pubY: CFG.auditorPubY },
+    });
+    say("entering the umbra — proving privately…");
+    const { proof, publicSignals } = await snarkjs.groth16.fullProve(r.witness, WASM_URL, ZKEY_URL);
+    say("sign the deposit in Freighter…");
+    await submitTransact({
+      poolId: CFG.poolId, caller: fr.address, recipient: fr.address,
+      proofHex: proofToHex(proof), publicHex: publicToHex(publicSignals),
+      extAmount: amt.toString(), fee: 0, enc1: r.enc1, enc2: r.enc2,
+      signXdr: freighterSign, rpcUrl: CFG.rpc,
+    });
+    say("settled in shadow");
+    pushHistory({ dir: "deposit", amount: amt.toString(), assetId });
+    disc?.settle(); sheet = null; await refreshFr();
+  } catch (e) { say(e.message || String(e)); disc?.idle(); proving = false; render(); return; }
+  proving = false; setTimeout(() => disc?.idle(), 1400); scheduleRescans(); render();
 }
 
 // orchestrated action runner — drives the occultation around the proof
@@ -330,9 +376,25 @@ function sheetView() {
     hint = "Amount and recipient stay hidden on-chain.";
     body = `${sel}<label class="lbl">Recipient</label><input id="s-addr" class="field mono" placeholder="umbra address (shld_…)" autocomplete="off"/>${amount}`;
   } else if (sheet === "deposit") {
-    title = "Into nightfall"; btn = "Deposit";
-    hint = "Public tokens enter the umbra and become private.";
-    body = `${sel}${amount}`;
+    title = "Into nightfall"; btn = null; // wired separately to Freighter
+    hint = "Deposit from your own Stellar wallet — public tokens enter the umbra.";
+    const a = assetById(asset);
+    if (!fr) {
+      body = `${sel}<button class="btn primary" id="fr-connect">Connect Freighter</button>
+        <p class="faucet">No ${esc(a.symbol)} yet? ${a.faucet === "circle"
+          ? `Get testnet USDC at <a href="${esc(CFG.circleFaucet)}" target="_blank">faucet.circle.com</a>`
+          : `ask the issuer to send you ${esc(a.symbol)}`} · XLM for fees at <a href="${esc(CFG.friendbot)}?addr=" target="_blank" id="xlm-faucet">friendbot</a>.</p>`;
+    } else {
+      const st = fr.status || { hasTrust: false, raw: 0n };
+      const wallet = `<div class="fr-row"><span class="muted small">Freighter</span><span class="mono small">${esc(short(fr.address, 5))}</span></div>
+        <div class="fr-row"><span class="muted small">${esc(a.symbol)} available</span><span class="mono small">${st.hasTrust ? esc(toHuman(st.raw, a.decimals)) : "no trustline"}</span></div>`;
+      if (!st.hasTrust) {
+        body = `${sel}${wallet}<button class="btn ghost" id="fr-trust">Add ${esc(a.symbol)} trustline</button>
+          <p class="faucet">Then fund it: ${a.faucet === "circle" ? `<a href="${esc(CFG.circleFaucet)}" target="_blank">faucet.circle.com</a>` : `issuer top-up`}.</p>`;
+      } else {
+        body = `${sel}${wallet}${amount}<button class="btn primary" id="fr-deposit">Deposit</button>`;
+      }
+    }
   } else if (sheet === "withdraw") {
     title = "Toward daybreak"; btn = "Withdraw";
     hint = "Value returns to the public light.";
@@ -348,22 +410,38 @@ function sheetView() {
     <p class="sheet-hint">${hint}</p>
     ${body}
     <div class="sheet-actions">
-      ${btn ? `<button class="btn primary" id="s-go">${btn}</button>` : `<button class="btn primary" id="s-copy">Copy</button>`}
-      <button class="btn ghost" id="s-cancel">${btn ? "Cancel" : "Done"}</button>
+      ${sheet === "receive" ? `<button class="btn primary" id="s-copy">Copy</button><button class="btn ghost" id="s-cancel">Done</button>`
+        : sheet === "deposit" ? `<button class="btn ghost" id="s-cancel">Close</button>`
+        : `<button class="btn primary" id="s-go">${btn}</button><button class="btn ghost" id="s-cancel">Cancel</button>`}
     </div>
   </div></div>`;
 }
 function wireSheet() {
   $("#scrim").onclick = (e) => { if (e.target.id === "scrim") { sheet = null; render(); } };
   $("#s-cancel").onclick = () => { sheet = null; render(); };
-  document.querySelectorAll(".seg-b").forEach((b) => b.onclick = () => { asset = Number(b.dataset.sasset); render(); });
+  document.querySelectorAll(".seg-b").forEach((b) => b.onclick = async () => { asset = Number(b.dataset.sasset); if (fr) await refreshFr(); render(); });
   const copy = $("#s-copy"); if (copy) copy.onclick = () => { navigator.clipboard?.writeText(ME.address); copy.textContent = "Copied"; };
+  // Freighter deposit controls
+  const xf = $("#xlm-faucet"); if (xf && fr) xf.href = `${CFG.friendbot}?addr=${fr.address}`;
+  const conn = $("#fr-connect"); if (conn) conn.onclick = async () => { try { await doConnectFreighter(); } catch (e) { toast(e.message || "connect failed"); } };
+  const trust = $("#fr-trust"); if (trust) trust.onclick = async () => {
+    const a = assetById(asset);
+    try { trust.textContent = "Confirm in Freighter…"; await addTrustline(fr.address, a.code, a.issuer); await refreshFr(); render(); }
+    catch (e) { toast(e.message || "trustline failed"); render(); }
+  };
+  const dep = $("#fr-deposit"); if (dep) dep.onclick = () => {
+    let amt; try { amt = toRaw($("#s-amt").value || "0", decOf(asset)); } catch (e) { return toast(e.message); }
+    if (amt <= 0n) return toast("Enter an amount");
+    if (fr.status && amt > fr.status.raw) return toast(`Only ${toHuman(fr.status.raw, decOf(asset))} ${symOf(asset)} available`);
+    runDeposit(amt, asset);
+  };
+  // send / withdraw (relayer)
   const go = $("#s-go"); if (!go) return;
   go.onclick = () => {
     let amt; try { amt = toRaw($("#s-amt").value || "0", decOf(asset)); } catch (e) { return toast(e.message); }
     if (amt <= 0n) return toast("Enter an amount");
     const addr = $("#s-addr") ? $("#s-addr").value.trim() : "";
-    if (sheet !== "deposit" && !addr) return toast("Enter a destination");
+    if (!addr) return toast("Enter a destination");
     runAction(sheet, { amt, assetId: asset, addr });
   };
 }

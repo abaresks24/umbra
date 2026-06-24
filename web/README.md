@@ -1,15 +1,35 @@
-# Web wallet
+# Umbra — web wallet
 
-A minimal browser wallet for the shielded USDC pool. **Proof generation runs in
-the browser** (snarkjs over the served `transfer.wasm` + `transfer_final.zkey`),
-so the witness — amounts, spend keys, blindings — never leaves the device. A thin
-relayer (`server.js`) only submits the resulting transaction; it sees the proof,
-the public signals, and the (encrypted) note payloads — all public data.
+The browser wallet for the shielded pool. **Proof generation runs in the browser**
+(snarkjs over the served `transfer.wasm` + `transfer_final.zkey`), so the witness —
+amounts, spend keys, blindings — never leaves the device.
+
+Two submission paths, chosen for privacy:
 
 ```
-browser (prove + scan + audit)  ──proof+publicData──▶  relayer  ──▶  Soroban pool
-        ▲ witness stays local                          (signs/submits)
+DEPOSIT (self-custodial):
+  browser (prove) ──signed by YOUR Freighter account──▶ Soroban pool
+  Your own Stellar account funds the shield. You appear on-chain as the depositor
+  (inherent — you're moving public funds in). Uses the real Circle testnet USDC.
+
+SEND / WITHDRAW (private):
+  browser (prove) ──proof+publicData──▶ relayer ──▶ Soroban pool
+  A relayer submits so your address never appears on-chain — preserving the
+  anonymity of private transfers. The relayer only sees public data.
 ```
+
+Identity: each Umbra wallet is a shielded identity created in-app ("Create wallet"
+→ a hex key). That is **separate** from your Stellar account (Freighter) — the
+Stellar account holds public funds; the Umbra key owns private notes.
+
+## Faucets (testnet)
+
+- **XLM** (fees): Friendbot — `https://friendbot.stellar.org/?addr=<G…>`, or the
+  link in the Deposit sheet once Freighter is connected.
+- **USDC**: the pool uses the **real Circle testnet USDC**, so fund your own
+  Freighter wallet at **faucet.circle.com**, then add the USDC trustline (button
+  in the Deposit sheet) and deposit.
+- **WETH** (second asset): self-issued — top up via the issuer (see repo scripts).
 
 ## Run
 
@@ -35,9 +55,13 @@ Open http://localhost:5173.
 
 ## Honesty
 
-- The relayer signs with a demo testnet account; a production wallet would sign
-  in-browser (e.g. Freighter). Privacy is unaffected — the relayer never sees the
-  witness.
+- **Deposits are self-custodial via Freighter** (your own account funds the
+  shield, using real Circle testnet USDC). The on-chain mechanism is verified by
+  `test/14` (a keypair signs the identical transaction); the in-browser Freighter
+  connect/sign path itself requires the extension and was not driven headlessly.
+- Send/withdraw still go through the relayer (a demo testnet account) to keep your
+  address off-chain. A production relayer would be a decentralised set; the fee
+  field (already in the circuit/contract) pays it.
 - Spent-note tracking is derived ON-CHAIN from `nullify` events, so balances are
   correct on any device (verified by `test/10`). localStorage is only an
   optimistic hint to cover RPC indexing lag right after a spend.

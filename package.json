@@ -15,6 +15,7 @@
     "web:smoke": "node web/smoke.cjs"
   },
   "dependencies": {
+    "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^16.0.1",
     "circomlib": "^2.0.5",
     "circomlibjs": "^0.1.7",
