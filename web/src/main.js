@@ -252,7 +252,6 @@ const landingView = () => `<div class="screen center landing">
     <button class="btn primary" id="go-create">Create wallet</button>
     <button class="btn ghost" id="go-connect">I have a private key</button>
   </div>
-  <span class="net">Stellar testnet</span>
 </div>`;
 function wireLanding() {
   $("#go-create").onclick = () => { tmpSeed = randomSeed(); view = "create"; render(); };
