@@ -253,7 +253,7 @@ function render() {
 
 // ---- landing ----
 const landingView = () => `<div class="screen center landing">
-  ${discStage(150)}
+  <img class="hero-logo" src="/logo-lg.png" alt="Umbra" />
   ${brand}
   <h1 class="title">Your money,<br/>kept in shadow.</h1>
   <p class="lede">Private payments on Stellar. Amounts and counterparties rest in the umbra — disclosed only to an auditor who holds the key.</p>
