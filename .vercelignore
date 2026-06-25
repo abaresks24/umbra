@@ -1,0 +1,13 @@
+# keep the Vercel upload lean: the build only needs web/, client/lib, scripts/,
+# api/ and package.json. Everything below is irrelevant to the deployed app.
+node_modules
+contracts
+circuits
+target
+test
+docs
+*.ptau
+*.wtns
+web/public/DA.jpg
+PROGRESS.md
+SECURITY.md

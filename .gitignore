@@ -11,6 +11,8 @@ identity.txt
 .env
 web/dist/
 dist/
-# web/public holds served circuit artifacts (already ignored via *.wasm/*.zkey)
-# but logo.svg and other assets there should be tracked.
+# web/public holds served circuit artifacts (globally ignored via *.wasm/*.zkey).
+# Re-include the two served by the web app so Vercel can build/serve them.
+!web/public/transfer.wasm
+!web/public/transfer_final.zkey
 web/public/DA.jpg
