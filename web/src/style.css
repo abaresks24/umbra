@@ -60,7 +60,7 @@ code { font-family: var(--font-mono); }
 /* — landing / panes — */
 .landing .title { margin-top: 2px; }
 .landing .stack { margin-top: 8px; }
-.hero-logo { width: clamp(140px, 40vw, 176px); height: auto; margin-bottom: 2px; }
+.hero-logo { width: clamp(200px, 56vw, 260px); height: auto; margin-bottom: 2px; }
 /* dictionary flourish under the wordmark on landing */
 .phonetic { font-family: var(--font-display); font-style: italic; font-weight: 400; color: var(--ink-soft); font-size: 1.05rem; letter-spacing: 0.3px; }
 .pane .keybox { width: 100%; max-width: 360px; padding: 14px; border-radius: var(--r); background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); }
