@@ -361,7 +361,7 @@ function wireHome() {
   $("#go-audit").onclick = () => { view = "auditor"; render(); };
   const m = $("#merge"); if (m) m.onclick = () => runAction("merge", { assetId: asset });
   document.querySelectorAll(".asset-tab").forEach((b) => b.onclick = () => { asset = Number(b.dataset.asset); revealBalance = false; render(); });
-  document.querySelectorAll(".act").forEach((b) => b.onclick = () => { sheet = b.dataset.sheet; render(); });
+  document.querySelectorAll(".act").forEach((b) => b.onclick = async () => { sheet = b.dataset.sheet; render(); if (sheet === "deposit" && fr) { await refreshFr(); render(); } });
   document.querySelectorAll(".row-reveal").forEach((b) => b.onclick = () => { const k = b.dataset.rev; reveals.has(k) ? reveals.delete(k) : reveals.add(k); render(); });
 }
 
@@ -386,8 +386,8 @@ function sheetView() {
           : `ask the issuer to send you ${esc(a.symbol)}`} · XLM for fees at <a href="${esc(CFG.friendbot)}?addr=" target="_blank" id="xlm-faucet">friendbot</a>.</p>`;
     } else {
       const st = fr.status || { hasTrust: false, raw: 0n };
-      const wallet = `<div class="fr-row"><span class="muted small">Freighter</span><span class="mono small">${esc(short(fr.address, 5))}</span></div>
-        <div class="fr-row"><span class="muted small">${esc(a.symbol)} available</span><span class="mono small">${st.hasTrust ? esc(toHuman(st.raw, a.decimals)) : "no trustline"}</span></div>`;
+      const wallet = `<div class="fr-row"><span class="muted small">Freighter · <span class="mono">${esc(short(fr.address, 4))}</span></span><button class="link sm" id="fr-disc">Disconnect</button></div>
+        <div class="fr-row"><span class="muted small">${esc(a.symbol)} available</span><span class="mono small">${st.hasTrust ? esc(toHuman(st.raw, a.decimals)) : "no trustline"} <button class="link sm" id="fr-refresh" title="refresh">↻</button></span></div>`;
       if (!st.hasTrust) {
         body = `${sel}${wallet}<button class="btn ghost" id="fr-trust">Add ${esc(a.symbol)} trustline</button>
           <p class="faucet">Then fund it: ${a.faucet === "circle" ? `<a href="${esc(CFG.circleFaucet)}" target="_blank">faucet.circle.com</a>` : `issuer top-up`}.</p>`;
@@ -424,6 +424,8 @@ function wireSheet() {
   // Freighter deposit controls
   const xf = $("#xlm-faucet"); if (xf && fr) xf.href = `${CFG.friendbot}?addr=${fr.address}`;
   const conn = $("#fr-connect"); if (conn) conn.onclick = async () => { try { await doConnectFreighter(); } catch (e) { toast(e.message || "connect failed"); } };
+  const fdisc = $("#fr-disc"); if (fdisc) fdisc.onclick = () => { fr = null; toast("Freighter disconnected — switch account in Freighter, then reconnect"); render(); };
+  const fref = $("#fr-refresh"); if (fref) fref.onclick = async () => { fref.textContent = "…"; await refreshFr(); render(); };
   const trust = $("#fr-trust"); if (trust) trust.onclick = async () => {
     const a = assetById(asset);
     try { trust.textContent = "Confirm in Freighter…"; await addTrustline(fr.address, a.code, a.issuer); await refreshFr(); render(); }
