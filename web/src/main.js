@@ -13,7 +13,6 @@ import { fetchCommitEvents, fetchAuditEvents, fetchSpentNullifiers, nullifierHex
 import { proofToHex, publicToHex } from "../../scripts/bn254_snark_hex";
 import { submitTransact } from "../../client/lib/soroban";
 import { connectFreighter, assetStatus, addTrustline, freighterSign, freighterInstalled } from "../../client/lib/wallet-connect";
-import { createDisc } from "./disc.js";
 
 const WASM_URL = "/transfer.wasm", ZKEY_URL = "/transfer_final.zkey";
 const SEED_KEY = "umbra-seed";
@@ -221,25 +220,17 @@ async function runAudit(priv) {
 const mark = "•••";
 const brand = `<div class="brand"><img class="brand-logo" src="/logo.png" alt="" aria-hidden="true"/>Umbra</div>`;
 
-function discStage(size) {
-  return `<div class="disc-stage" style="--disc:${size}"><div class="disc-mount" id="disc-mount"></div></div>`;
-}
-// move the single persistent canvas into the active stage (no GL context churn)
-function placeDisc() {
-  const mount = $("#disc-mount");
-  if (!mount) return;
-  if (!discCanvas) { discCanvas = document.createElement("canvas"); discCanvas.className = "disc"; }
-  if (discCanvas.parentElement !== mount) mount.appendChild(discCanvas);
-  if (!disc) disc = createDisc(discCanvas);
-  disc.reveal(revealBalance || proving);
-}
+// Editorial direction: the eclipse is the logo (a dark umbra on cream paper),
+// not a WebGL disc. These remain as harmless no-ops so the proving-animation
+// hooks (disc?.occult() etc.) don't need to be threaded out of the action paths.
+function placeDisc() {}
 
 function render() {
   const app = $("#app");
-  if (!CFG) { app.innerHTML = `<div class="screen center">${discStage(180)}</div>`; placeDisc(); return; }
+  if (!CFG) { app.innerHTML = `<div class="screen center"><img class="hero-eclipse" src="/logo.png" alt="" style="opacity:.6"/></div>`; return; }
   if (CFG.error) { app.innerHTML = `<div class="screen center"><p class="muted">${esc(CFG.error)}</p></div>`; return; }
 
-  if (proving) { app.innerHTML = provingView(); placeDisc(); disc?.reveal(true); return; }
+  if (proving) { app.innerHTML = provingView(); return; }
   if (view === "landing") return void (app.innerHTML = landingView(), wireLanding());
   if (view === "create") return void (app.innerHTML = createView(), wireCreate());
   if (view === "connect") return void (app.innerHTML = connectView(), wireConnect());
@@ -254,9 +245,9 @@ function render() {
 // ---- landing ----
 const landingView = () => `<div class="screen center landing">
   <img class="hero-logo" src="/logo.png" alt="Umbra" />
-  ${brand}
-  <h1 class="title">Your money,<br/>kept in shadow.</h1>
-  <p class="lede">Private payments on Stellar. Amounts and counterparties rest in the umbra — disclosed only to an auditor who holds the key.</p>
+  <h1 class="title">Umbra</h1>
+  <p class="phonetic">/ˈʌm.brə/</p>
+  <p class="lede">The fully shaded inner region of a shadow — and a wallet where your money lives there. Private payments on Stellar; amounts and counterparties stay hidden, disclosed only to an auditor who holds the key.</p>
   <div class="stack">
     <button class="btn primary" id="go-create">Create wallet</button>
     <button class="btn ghost" id="go-connect">I have a private key</button>
@@ -264,7 +255,6 @@ const landingView = () => `<div class="screen center landing">
   <span class="net">Stellar testnet</span>
 </div>`;
 function wireLanding() {
-  placeDisc(); disc?.idle();
   $("#go-create").onclick = () => { tmpSeed = randomSeed(); view = "create"; render(); };
   $("#go-connect").onclick = () => { view = "connect"; render(); };
 }
@@ -314,13 +304,11 @@ function homeView() {
     </header>
 
     <section class="hero">
-      <div class="disc-stage" style="--disc:300">
-        <div class="disc-mount" id="disc-mount"></div>
-        <button class="hero-balance ${revealBalance ? "lit" : ""}" id="reveal-bal" aria-label="reveal balance">
-          <span class="amt">${esc(bal)}</span>
-          <span class="sym">${esc(symOf(asset))}</span>
-        </button>
-      </div>
+      <img class="hero-eclipse" src="/logo.png" alt="" aria-hidden="true" />
+      <button class="hero-balance ${revealBalance ? "lit" : ""}" id="reveal-bal" aria-label="reveal balance">
+        <span class="amt">${esc(bal)}</span>
+        <span class="sym">${esc(symOf(asset))}</span>
+      </button>
       <p class="hero-cap">${revealBalance ? "Tap to return to shadow" : "Your balance rests in shadow — tap to reveal"}</p>
       ${assets.length > 1 ? `<div class="asset-tabs">${assets.map((a) => `<button class="asset-tab ${a.id === asset ? "on" : ""}" data-asset="${a.id}">${esc(a.symbol)}</button>`).join("")}</div>` : ""}
       ${nc > 1 ? `<button class="merge-link" id="merge">Merge ${nc} notes</button>` : ""}
@@ -461,7 +449,7 @@ const auditorView = () => `<div class="screen auditor">
   </div>
   <label class="lbl">Auditor private key</label>
   <textarea id="audit-key" class="field mono" rows="2" placeholder="auditor key"></textarea>
-  <button class="btn cool" id="b-audit">Reveal ledger</button>
+  <button class="btn gold" id="b-audit">Reveal ledger</button>
   <div class="aud-out" id="audit-out"><p class="empty cool">The ledger waits in shadow.</p></div>
 </div>`;
 function wireAuditor() {
@@ -472,7 +460,7 @@ function wireAuditor() {
 
 // ---- proving (the occultation) ----
 const provingView = () => `<div class="screen center proving">
-  ${discStage(300)}
+  <img class="prove-eclipse" src="/logo.png" alt="" aria-hidden="true" />
   <p class="prove-status" id="prove-status">entering the umbra…</p>
   <p class="prove-sub">Generating your zero-knowledge proof. This happens on your device.</p>
 </div>`;

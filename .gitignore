@@ -13,3 +13,4 @@ web/dist/
 dist/
 # web/public holds served circuit artifacts (already ignored via *.wasm/*.zkey)
 # but logo.svg and other assets there should be tracked.
+web/public/DA.jpg
