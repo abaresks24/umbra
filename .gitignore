@@ -16,3 +16,4 @@ dist/
 !web/public/transfer.wasm
 !web/public/transfer_final.zkey
 web/public/DA.jpg
+.vercel
