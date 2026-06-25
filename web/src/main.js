@@ -247,7 +247,7 @@ const landingView = () => `<div class="screen center landing">
   <img class="hero-logo" src="/logo.png" alt="Umbra" />
   <h1 class="title">Umbra</h1>
   <p class="phonetic">/ˈʌm.brə/</p>
-  <p class="lede">The fully shaded inner region of a shadow — and a wallet where your money lives there. Private payments on Stellar; amounts and counterparties stay hidden, disclosed only to an auditor who holds the key.</p>
+  <p class="lede">Private payments and balances on Stellar</p>
   <div class="stack">
     <button class="btn primary" id="go-create">Create wallet</button>
     <button class="btn ghost" id="go-connect">I have a private key</button>
