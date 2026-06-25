@@ -291,7 +291,7 @@ function wireConnect() {
 // ---- home ----
 function homeView() {
   const assets = CFG.assets || [];
-  const bal = revealBalance ? toHuman(balanceOf(asset), decOf(asset)) : mark;
+  const bal = toHuman(balanceOf(asset), decOf(asset));
   const nc = noteCount(asset);
   return `<div class="screen home">
     <header class="bar">
@@ -304,11 +304,10 @@ function homeView() {
 
     <section class="hero">
       <img class="hero-eclipse" src="/logo.png" alt="" aria-hidden="true" />
-      <button class="hero-balance ${revealBalance ? "lit" : ""}" id="reveal-bal" aria-label="reveal balance">
+      <div class="hero-balance" id="reveal-bal">
         <span class="amt">${esc(bal)}</span>
         <span class="sym">${esc(symOf(asset))}</span>
-      </button>
-      <p class="hero-cap">${revealBalance ? "Tap to return to shadow" : "Your balance rests in shadow — tap to reveal"}</p>
+      </div>
       ${assets.length > 1 ? `<div class="asset-tabs">${assets.map((a) => `<button class="asset-tab ${a.id === asset ? "on" : ""}" data-asset="${a.id}">${esc(a.symbol)}</button>`).join("")}</div>` : ""}
       ${nc > 1 ? `<button class="merge-link" id="merge">Merge ${nc} notes</button>` : ""}
     </section>
@@ -344,10 +343,10 @@ function wireHome() {
   placeDisc();
   $("#disconnect").onclick = disconnect;
   $("#copyaddr").onclick = () => { navigator.clipboard?.writeText(ME.address); toast("Address copied"); };
-  $("#reveal-bal").onclick = () => { revealBalance = !revealBalance; disc?.reveal(revealBalance); render(); };
+  // balance is always shown — no reveal toggle
   $("#go-audit").onclick = () => { view = "auditor"; render(); };
   const m = $("#merge"); if (m) m.onclick = () => runAction("merge", { assetId: asset });
-  document.querySelectorAll(".asset-tab").forEach((b) => b.onclick = () => { asset = Number(b.dataset.asset); revealBalance = false; render(); });
+  document.querySelectorAll(".asset-tab").forEach((b) => b.onclick = () => { asset = Number(b.dataset.asset); render(); });
   document.querySelectorAll(".act").forEach((b) => b.onclick = async () => { sheet = b.dataset.sheet; render(); if (sheet === "deposit" && fr) { await refreshFr(); render(); } });
   document.querySelectorAll(".row-reveal").forEach((b) => b.onclick = () => { const k = b.dataset.rev; reveals.has(k) ? reveals.delete(k) : reveals.add(k); render(); });
 }
