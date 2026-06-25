@@ -219,7 +219,7 @@ async function runAudit(priv) {
 
 // ============================ rendering ============================
 const mark = "•••";
-const brand = `<div class="brand"><span class="eclipse"></span>Umbra</div>`;
+const brand = `<div class="brand"><img class="brand-logo" src="/logo.svg" alt="" aria-hidden="true"/>Umbra</div>`;
 
 function discStage(size) {
   return `<div class="disc-stage" style="--disc:${size}"><div class="disc-mount" id="disc-mount"></div></div>`;
@@ -452,7 +452,7 @@ function wireSheet() {
 const auditorView = () => `<div class="screen auditor">
   <header class="bar">
     <button class="icon-btn" id="audit-back" aria-label="back">←</button>
-    <div class="brand"><span class="eclipse cool"></span>Corona</div>
+    <div class="brand"><img class="brand-logo" src="/logo.svg" alt="" aria-hidden="true"/>Corona</div>
     <span></span>
   </header>
   <div class="aud-intro">

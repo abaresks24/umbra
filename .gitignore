@@ -10,5 +10,6 @@ build/
 identity.txt
 .env
 web/dist/
-web/public/
 dist/
+# web/public holds served circuit artifacts (already ignored via *.wasm/*.zkey)
+# but logo.svg and other assets there should be tracked.
