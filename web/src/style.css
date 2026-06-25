@@ -62,7 +62,7 @@ code { font-family: var(--font-mono); }
 .landing .stack { margin-top: 8px; }
 .hero-logo { width: clamp(200px, 56vw, 260px); height: auto; margin-bottom: 2px; }
 /* dictionary flourish under the wordmark on landing */
-.phonetic { font-family: var(--font-display); font-style: italic; font-weight: 400; color: var(--ink-soft); font-size: 1.05rem; letter-spacing: 0.3px; }
+.phonetic { font-family: var(--font-display); font-style: italic; font-weight: 400; color: var(--ink-soft); font-size: 1.05rem; letter-spacing: 0.3px; margin-top: -13px; }
 .pane .keybox { width: 100%; max-width: 360px; padding: 14px; border-radius: var(--r); background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); }
 .pane .keybox code { display: block; font-size: 0.78rem; line-height: 1.6; word-break: break-all; color: var(--accent-deep); text-align: left; }
 .check { display: flex; align-items: center; gap: 9px; color: var(--ink-soft); font-size: var(--t-sm); margin: 4px 0 2px; cursor: pointer; }
