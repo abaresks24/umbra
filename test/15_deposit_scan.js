@@ -20,6 +20,14 @@ const B = path.join(ROOT, "circuits/build");
 const cfg = JSON.parse(fs.readFileSync(path.join(B, "web_config.json"), "utf8"));
 const env = Object.fromEntries(fs.readFileSync(path.join(B, "usdc.env"), "utf8").trim().split("\n").map((l) => l.split("=")));
 const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// CLI calls race the RPC's view of new accounts/sequences (TxNoAccount, txBadSeq);
+// retry a few times so the test SETUP is reliable and we actually reach the deposit.
+const shRetry = async (c, tries = 5) => {
+  for (let i = 0; i < tries; i++) {
+    try { return sh(c); } catch (e) { if (i === tries - 1) throw e; await sleep(5000); }
+  }
+};
 const weth = cfg.assets.find((a) => a.faucet === "issuer"); // self-issued, fundable
 
 (async () => {
@@ -35,8 +43,22 @@ const weth = cfg.assets.find((a) => a.faucet === "issuer"); // self-issued, fund
   sh(`stellar keys generate ${alias} --network testnet --fund`);
   const addr = sh(`stellar keys address ${alias}`);
   const kp = SKeypair.fromSecret(sh(`stellar keys show ${alias}`));
-  sh(`stellar tx new change-trust --source ${alias} --line ${weth.code}:${weth.issuer} --network testnet`);
-  sh(`stellar tx new payment --source usdc-issuer --destination ${addr} --asset ${weth.code}:${weth.issuer} --amount 500000000 --network testnet`);
+  await sleep(8000); // let friendbot funding propagate to the RPC
+  await shRetry(`stellar tx new change-trust --source ${alias} --line ${weth.code}:${weth.issuer} --network testnet`);
+  // fund WETH and CONFIRM it actually arrived (the issuer payment can need a retry)
+  let funded = 0n;
+  for (let i = 0; i < 6 && funded < 50000000n; i++) {
+    await shRetry(`stellar tx new payment --source usdc-issuer --destination ${addr} --asset ${weth.code}:${weth.issuer} --amount 1000000000 --network testnet`).catch(() => {});
+    await sleep(5000);
+    try {
+      const acct = await (await fetch(`https://horizon-testnet.stellar.org/accounts/${addr}`)).json();
+      const bal = (acct.balances || []).find((b) => b.asset_code === weth.code);
+      funded = bal ? BigInt(Math.round(parseFloat(bal.balance) * 1e7)) : 0n;
+    } catch {}
+    console.log(`  funding ${weth.symbol}: balance=${funded}`);
+  }
+  if (funded < 50000000n) { console.log("⚠️  could not fund the test wallet — aborting (test plumbing, not the deposit path)"); process.exit(2); }
+  await sleep(4000); // let the funding tx settle before the deposit (seq propagation)
 
   // build + submit the deposit (50 units), encrypting the note to the view key
   const tree = buildTree([]);

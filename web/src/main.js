@@ -291,11 +291,11 @@ const landingView = () => `<div class="screen center landing">
 function wireLanding() {
   $("#go-create").onclick = () => { tmpSeed = randomSeed(); view = "create"; render(); };
   $("#go-connect").onclick = () => { view = "connect"; render(); };
-  // the "Read the docs" anchor navigates natively via href="#docs" (hashchange)
+  $("#go-docs").onclick = (e) => { e.preventDefault(); openDocs(); };
 }
-// open/close docs purely through the URL hash — a plain location.hash assignment
-// reliably fires `hashchange`, which is the single place that renders the route.
-function openDocs() { if (location.hash === "#docs") renderDocs(); else location.hash = "docs"; }
+// Open the docs by rendering immediately (never depend on a hashchange firing),
+// then reflect it in the URL so the route is shareable and the back button works.
+function openDocs() { renderDocs(); if (location.hash !== "#docs") { try { history.pushState(null, "", "#docs"); } catch {} } }
 function renderDocs() { if (view !== "docs") { view = "docs"; render(); } window.scrollTo(0, 0); }
 function wireDocs() {
   const back = () => { if (location.hash === "#docs") location.hash = ""; else { view = ME ? "home" : "landing"; render(); } };
@@ -398,17 +398,16 @@ function holdingRow(a) {
 }
 function activityRow(e, i) {
   const dirIcon = { deposit: "↧", withdraw: "↥", send: "↗" }[e.dir] || "◐";
-  const lit = reveals.has("h" + i);
-  const amt = lit ? `${toHuman(e.amount, decOf(e.assetId))} ${symOf(e.assetId)}` : mark;
+  const amt = `${toHuman(e.amount, decOf(e.assetId))} ${symOf(e.assetId)}`; // always shown
   const label = { deposit: "Deposited", withdraw: "Withdrew", send: "Sent" }[e.dir] || e.dir;
   const when = new Date(e.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const link = e.hash ? `<a class="arow-tx" href="${EXPLORER}/tx/${esc(e.hash)}" target="_blank" rel="noopener" title="View on stellar.expert" aria-label="View transaction on explorer">↗</a>` : "";
   return `<div class="arow-wrap">
-    <button class="arow row-reveal ${lit ? "lit" : ""}" data-rev="h${i}">
+    <div class="arow lit">
       <span class="ecl ${e.dir}">${dirIcon}</span>
       <span class="arow-main"><span class="dir">${label}</span><span class="when">${esc(when)}</span></span>
       <span class="amt">${esc(amt)}</span>
-    </button>
+    </div>
     ${link}
   </div>`;
 }
