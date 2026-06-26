@@ -201,9 +201,9 @@ textarea.field { resize: none; line-height: 1.5; }
 .hrow-amt .husd { font-size: var(--t-xs); color: var(--ink-faint); }
 
 /* ============================ sheets ============================ */
-.sheet-scrim { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-end; justify-content: center; background: var(--scrim); backdrop-filter: blur(2px); animation: fade var(--dur) var(--ease); }
-.sheet { width: 100%; max-width: 460px; background: var(--paper-2); border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: var(--shadow-sheet); border-top: 1px solid var(--line); padding: 10px var(--pad) calc(24px + env(safe-area-inset-bottom)); animation: rise var(--dur-slow) var(--ease-out); }
-.sheet-grip { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px auto 16px; }
+.sheet-scrim { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: var(--pad); background: var(--scrim); backdrop-filter: blur(2px); animation: fade var(--dur) var(--ease); overflow-y: auto; }
+.sheet { width: 100%; max-width: 440px; max-height: calc(100dvh - 2 * var(--pad)); overflow-y: auto; background: var(--paper-2); border-radius: var(--r-lg); box-shadow: var(--shadow-sheet); border: 1px solid var(--line); padding: 22px var(--pad) 24px; animation: pop var(--dur-slow) var(--ease-out); }
+.sheet-grip { display: none; }
 .sheet-title { font-family: var(--font-display); font-weight: 600; font-size: 1.7rem; letter-spacing: -0.3px; }
 .sheet-hint { color: var(--ink-soft); font-size: var(--t-sm); margin: 6px 0 4px; }
 .seg { display: flex; gap: 0; border-radius: var(--r); box-shadow: inset 0 0 0 1.5px var(--line); overflow: hidden; }
@@ -246,7 +246,7 @@ textarea.field { resize: none; line-height: 1.5; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @keyframes fade { from { opacity: 0; } }
-@keyframes rise { from { transform: translateY(14%); opacity: 0.6; } }
+@keyframes pop { from { transform: translateY(8px) scale(0.98); opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   .sheet-scrim, .sheet, .prove-eclipse { animation: none; }
