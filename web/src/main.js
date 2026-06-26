@@ -303,7 +303,6 @@ function homeView() {
     </header>
 
     <section class="hero">
-      <img class="hero-eclipse" src="/logo.png" alt="" aria-hidden="true" />
       <div class="hero-balance" id="reveal-bal">
         <span class="amt">${esc(bal)}</span>
         <span class="sym">${esc(symOf(asset))}</span>

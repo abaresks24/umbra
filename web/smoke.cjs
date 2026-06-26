@@ -18,14 +18,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await p.evaluate(() => { const c = document.getElementById("saved"); if (c) { c.checked = true; c.dispatchEvent(new Event("change")); } document.getElementById("open")?.click(); });
   await sleep(4000);
   const home = await p.evaluate(() => ({
-    eclipse: !!document.querySelector(".hero-eclipse"),
+    balance: !!document.querySelector(".hero-balance"),
     reveal: !!document.getElementById("reveal-bal"),
     send: !!document.querySelector('[data-sheet="send"]'),
     deposit: !!document.querySelector('[data-sheet="deposit"]'),
     audit: !!document.getElementById("go-audit"),
   }));
   await b.close();
-  const pass = !errors.length && landing.create && landing.connect && landing.logo && home.eclipse && home.reveal && home.send && home.deposit && home.audit;
+  const pass = !errors.length && landing.create && landing.connect && landing.logo && home.balance && home.reveal && home.send && home.deposit && home.audit;
   console.log(pass ? "🎉 web smoke: PASS" : "❌ web smoke: FAIL", JSON.stringify({ landing, home }), errors.length ? "errors=" + errors.join("; ") : "");
   process.exit(pass ? 0 : 1);
 })().catch((e) => { console.error("smoke error:", e.message); process.exit(1); });
