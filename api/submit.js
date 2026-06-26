@@ -5,7 +5,12 @@
 // by the relayer account (SHIELD_SECRET env). Returns once the network accepts
 // the tx (PENDING) — the wallet polls the chain for confirmation — so the
 // function stays well under the serverless time limit.
-const { Contract, TransactionBuilder, nativeToScVal, Address, rpc, Networks, Keypair } = require("@stellar/stellar-sdk");
+// Use an aliased stellar-sdk 14.x for the relayer: its CJS build resolves
+// @noble/hashes to a CommonJS version, so it loads under Vercel's require-only
+// serverless loader (sdk 16's CJS require()s an ESM-only @noble/hashes and
+// crashes the function with ERR_REQUIRE_ESM). The browser keeps sdk 16. The
+// relayer only builds/simulates/submits, so it doesn't need 16's meta decoding.
+const { Contract, TransactionBuilder, nativeToScVal, Address, rpc, Networks, Keypair } = require("stellar-sdk-relayer");
 const CFG = require("./_config.js");
 
 const HEX = /^[0-9a-fA-F]+$/, ADDR = /^[GC][A-Z0-9]{55}$/, INT = /^-?[0-9]+$/;
