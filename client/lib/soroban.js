@@ -53,7 +53,8 @@ async function submitTransact(args) {
   }
 
   let g = await server.getTransaction(sent.hash);
-  for (let i = 0; i < 30 && g.status === "NOT_FOUND"; i++) { await new Promise((r) => setTimeout(r, 2000)); g = await server.getTransaction(sent.hash); }
+  // testnet can be slow to surface a tx — poll up to ~2.5 min before giving up
+  for (let i = 0; i < 75 && g.status === "NOT_FOUND"; i++) { await new Promise((r) => setTimeout(r, 2000)); g = await server.getTransaction(sent.hash); }
   if (g.status !== "SUCCESS") throw new Error("transaction " + g.status);
   return sent.hash;
 }
