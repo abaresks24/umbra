@@ -155,6 +155,13 @@ async function doSend(amount, assetId, addr) {
   markSpent(chosen); scheduleRescans(); return hash;
 }
 async function doUnshield(amount, assetId, stellarAddr) {
+  // Pre-flight the destination: the pool → recipient payout reverts on-chain if
+  // the account doesn't exist or lacks a trustline for the asset. Surface that as
+  // a clear message instead of a cryptic failed transaction.
+  const a = assetById(assetId);
+  const st = await assetStatus(stellarAddr, a.code, a.issuer, a.decimals);
+  if (!st.exists) throw new Error(`Destination ${short(stellarAddr, 4)} isn't activated on Stellar yet — fund it first.`);
+  if (!st.hasTrust) throw new Error(`Destination has no ${a.symbol} trustline — it can't receive ${a.symbol}. Add the trustline there first.`);
   const { chosen, sum } = selectInputs(amount, assetId);
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
   const hash = await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [change], publicAmount: -amount, extData: { recipient: stellarAddr, extAmount: String(-amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: stellarAddr, extAmount: -amount, assetId });
@@ -298,7 +305,8 @@ function wireLanding() {
 function openDocs() { renderDocs(); if (location.hash !== "#docs") { try { history.pushState(null, "", "#docs"); } catch {} } }
 function renderDocs() { if (view !== "docs") { view = "docs"; render(); } window.scrollTo(0, 0); }
 function wireDocs() {
-  const back = () => { if (location.hash === "#docs") location.hash = ""; else { view = ME ? "home" : "landing"; render(); } };
+  // leave docs: clear any hash (#docs or a #section anchor) and render the wallet.
+  const back = () => { view = ME ? "home" : "landing"; try { history.pushState(null, "", location.pathname); } catch {} render(); };
   $("#doc-back").onclick = back;
   const b2 = $("#doc-back-2"); if (b2) b2.onclick = back;
   // scroll-spy: highlight the contents entry whose section is in view
@@ -562,10 +570,13 @@ function toast(msg) {
   const saved = localStorage.getItem(SEED_KEY);
   if (saved && !CFG.error) { try { ME = deriveIdentity(saved); history = JSON.parse(localStorage.getItem(histKey()) || "[]"); view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
   if (location.hash === "#docs") view = "docs"; // shareable /#docs deep-link
-  // route the docs view off the URL hash — handles enter (#docs) and leave (cleared)
+  // route the docs view off the URL hash. Only #docs opens it and only a CLEARED
+  // hash closes it; any other hash (#what, #model, …) is in-page TOC navigation
+  // within the docs and must NOT close the page.
   window.addEventListener("hashchange", () => {
-    if (location.hash === "#docs") renderDocs();
-    else if (view === "docs") { view = ME ? "home" : "landing"; render(); }
+    const h = location.hash;
+    if (h === "#docs") renderDocs();
+    else if ((h === "" || h === "#") && view === "docs") { view = ME ? "home" : "landing"; render(); }
   });
   render();
   if (ME) rescan();
