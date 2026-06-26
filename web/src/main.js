@@ -4,6 +4,7 @@
 // umbra (shadow) and a corona of light reveals them — to the owner on a tap, to
 // the auditor by view key. All wallet logic is unchanged; this is presentation.
 import * as snarkjs from "snarkjs";
+import { docsView } from "./docs.js";
 import { initPoseidon, Note } from "../../client/lib/crypto";
 import { buildTree } from "../../client/lib/tree";
 import { buildWitness } from "../../client/lib/transaction";
@@ -256,6 +257,7 @@ function render() {
   if (CFG.error) { app.innerHTML = `<div class="screen center"><p class="muted">${esc(CFG.error)}</p></div>`; return; }
 
   if (proving) { app.innerHTML = provingView(); return; }
+  if (view === "docs") return void (app.innerHTML = docsView(CFG), wireDocs());
   if (view === "landing") return void (app.innerHTML = landingView(), wireLanding());
   if (view === "create") return void (app.innerHTML = createView(), wireCreate());
   if (view === "connect") return void (app.innerHTML = connectView(), wireConnect());
@@ -277,11 +279,21 @@ const landingView = () => `<div class="screen center landing">
     <button class="btn primary" id="go-create">Create wallet</button>
     <button class="btn ghost" id="go-connect">I have a private key</button>
   </div>
-  ${IS_EXT ? "" : `<a class="ext-cta" href="https://github.com/abaresks24/umbra/releases/latest/download/umbra-extension.zip">Get the Chrome extension ↗</a>`}
+  <div class="landing-foot">
+    <a class="ext-cta" id="go-docs" href="#docs">Read the docs</a>
+    ${IS_EXT ? "" : `<a class="ext-cta" href="https://github.com/abaresks24/umbra/releases/latest/download/umbra-extension.zip">Get the Chrome extension ↗</a>`}
+  </div>
 </div>`;
 function wireLanding() {
   $("#go-create").onclick = () => { tmpSeed = randomSeed(); view = "create"; render(); };
   $("#go-connect").onclick = () => { view = "connect"; render(); };
+  $("#go-docs").onclick = (e) => { e.preventDefault(); openDocs(); };
+}
+function openDocs() { if (location.hash !== "#docs") history.pushState(null, "", "#docs"); view = "docs"; render(); window.scrollTo(0, 0); }
+function wireDocs() {
+  const back = () => { if (location.hash) history.pushState(null, "", location.pathname); view = ME ? "home" : "landing"; render(); };
+  $("#doc-back").onclick = back;
+  const b2 = $("#doc-back-2"); if (b2) b2.onclick = back;
 }
 
 const createView = () => `<div class="screen center pane">
@@ -325,6 +337,7 @@ function homeView() {
       ${brand}
       <div class="bar-r">
         <button class="chip" id="copyaddr" title="copy your address">${esc(short(ME.address, 5))}</button>
+        <button class="icon-btn" id="go-docs" title="docs" aria-label="docs">?</button>
         <button class="icon-btn" id="disconnect" title="disconnect" aria-label="disconnect">⏻</button>
       </div>
     </header>
@@ -382,6 +395,7 @@ function activityRow(e, i) {
 function wireHome() {
   placeDisc();
   $("#disconnect").onclick = disconnect;
+  $("#go-docs").onclick = openDocs;
   $("#copyaddr").onclick = () => { navigator.clipboard?.writeText(ME.address); toast("Address copied"); };
   // balance is always shown — no reveal toggle
   $("#go-audit").onclick = () => { view = "auditor"; render(); };
@@ -528,6 +542,8 @@ function toast(msg) {
   fetchPrices(); // non-blocking; re-renders when the ETH/USD price lands
   const saved = localStorage.getItem(SEED_KEY);
   if (saved && !CFG.error) { try { ME = deriveIdentity(saved); history = JSON.parse(localStorage.getItem(histKey()) || "[]"); view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
+  if (location.hash === "#docs") view = "docs"; // shareable /#docs deep-link
+  window.addEventListener("hashchange", () => { if (location.hash === "#docs") { if (view !== "docs") { view = "docs"; render(); window.scrollTo(0, 0); } } });
   render();
   if (ME) rescan();
 })();

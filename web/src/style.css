@@ -64,8 +64,39 @@ code { font-family: var(--font-mono); }
 /* — landing / panes — */
 .landing .title { margin-top: 2px; }
 .landing .stack { margin-top: 8px; }
-.ext-cta { margin-top: 18px; font-family: var(--font-ui); font-size: var(--t-sm); font-weight: 600; color: var(--ink-soft); text-decoration: none; letter-spacing: 0.2px; border-bottom: 1px solid var(--line); padding-bottom: 2px; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.landing-foot { margin-top: 22px; display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; justify-content: center; }
+.ext-cta { font-family: var(--font-ui); font-size: var(--t-sm); font-weight: 600; color: var(--ink-soft); text-decoration: none; letter-spacing: 0.2px; border-bottom: 1px solid var(--line); padding-bottom: 2px; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .ext-cta:hover { color: var(--accent-deep); border-color: var(--accent-deep); }
+
+/* ============================ docs page ============================ */
+.doc { max-width: 720px; }
+.doc .bar { position: sticky; top: 0; z-index: 5; background: linear-gradient(var(--paper) 70%, transparent); padding-top: 4px; padding-bottom: 10px; }
+.btn.sm { padding: 7px 14px; font-size: var(--t-sm); }
+.doc-body { padding-bottom: 40px; }
+.doc-kicker { font-family: var(--font-ui); font-size: var(--t-xs); letter-spacing: 2px; text-transform: uppercase; color: var(--ink-faint); margin-top: 14px; }
+.doc-title { font-family: var(--font-display); font-weight: 600; font-size: clamp(2rem, 7vw, 2.9rem); line-height: 1.08; letter-spacing: -0.4px; margin: 6px 0 14px; }
+.doc-lede { font-family: var(--font-display); font-size: clamp(1.05rem, 3.4vw, 1.28rem); line-height: 1.5; color: var(--ink-soft); margin-bottom: 26px; }
+.doc-toc { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 16px 0; margin-bottom: 14px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.doc-toc a { font-size: var(--t-sm); color: var(--ink-soft); text-decoration: none; }
+.doc-toc a:hover { color: var(--accent-deep); text-decoration: underline; text-underline-offset: 3px; }
+.doc section { padding: 22px 0; border-bottom: 1px solid var(--line-soft); scroll-margin-top: 64px; }
+.doc h2 { font-family: var(--font-display); font-weight: 600; font-size: clamp(1.4rem, 5vw, 1.8rem); letter-spacing: -0.2px; margin-bottom: 12px; }
+.doc h3 { font-family: var(--font-ui); font-weight: 800; font-size: 1.02rem; letter-spacing: 0.2px; margin: 18px 0 6px; }
+.doc p { line-height: 1.62; color: var(--ink); margin-bottom: 12px; }
+.doc p.doc-meta { font-size: var(--t-sm); color: var(--ink-faint); }
+.doc ul, .doc ol { margin: 4px 0 14px; padding-left: 20px; }
+.doc li { line-height: 1.6; margin-bottom: 7px; }
+.doc strong { font-weight: 700; }
+.doc em { font-style: italic; }
+.doc code { font-family: var(--font-mono); font-size: 0.86em; background: rgba(28, 26, 20, 0.06); padding: 1px 5px; border-radius: 4px; }
+.doc-code { font-family: var(--font-mono); font-size: var(--t-sm); background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; margin: 6px 0 14px; overflow-x: auto; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.doc-install { background: rgba(168, 126, 54, 0.06); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 18px 18px; margin-top: 8px; }
+.doc-steps { padding-left: 22px; }
+.doc-steps li { margin-bottom: 11px; }
+.doc-steps .dl { display: inline-flex; margin-top: 8px; text-decoration: none; }
+.doc-note { font-size: var(--t-sm); color: var(--ink-soft); background: var(--paper); border-left: 2px solid var(--accent); padding: 10px 14px; border-radius: 0 var(--r-sm) var(--r-sm) 0; margin-top: 14px; }
+.doc-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 22px; color: var(--ink-faint); font-size: var(--t-sm); }
+.doc-foot .link { color: var(--accent-deep); }
 .hero-logo { width: clamp(200px, 56vw, 260px); height: auto; margin-bottom: 2px; }
 /* dictionary flourish under the wordmark on landing */
 .phonetic { font-family: var(--font-display); font-style: italic; font-weight: 400; color: var(--ink-soft); font-size: 1.05rem; letter-spacing: 0.3px; margin-top: -13px; }
