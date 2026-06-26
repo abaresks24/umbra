@@ -123,6 +123,18 @@ textarea.field { resize: none; line-height: 1.5; }
 .arow .amt { font-family: var(--font-mono); font-size: var(--t-sm); color: var(--ink-soft); letter-spacing: 0.3px; }
 .arow.lit .amt { color: var(--accent-deep); font-weight: 600; }
 
+/* ---- token holdings (under the actions) ---- */
+.holdings { display: flex; flex-direction: column; gap: 2px; margin-bottom: 28px; }
+.hrow { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 4px; border-bottom: 1px solid var(--line-soft); }
+.hrow:last-child { border-bottom: none; }
+.hico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--r-pill); flex: none; font-family: var(--font-display); font-weight: 600; font-size: 1rem; color: var(--ink); background: var(--paper); box-shadow: inset 0 0 0 1.5px var(--line); }
+.hrow-main { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.hrow-main .hsym { font-size: var(--t-md); font-weight: 700; letter-spacing: 0.2px; }
+.hrow-main .merge-link.sm { align-self: flex-start; font-size: var(--t-xs); }
+.hrow-amt { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.hrow-amt .hbal { font-family: var(--font-mono); font-size: var(--t-md); letter-spacing: 0.3px; }
+.hrow-amt .husd { font-size: var(--t-xs); color: var(--ink-faint); }
+
 /* ============================ sheets ============================ */
 .sheet-scrim { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-end; justify-content: center; background: var(--scrim); backdrop-filter: blur(2px); animation: fade var(--dur) var(--ease); }
 .sheet { width: 100%; max-width: 460px; background: var(--paper-2); border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: var(--shadow-sheet); border-top: 1px solid var(--line); padding: 10px var(--pad) calc(24px + env(safe-area-inset-bottom)); animation: rise var(--dur-slow) var(--ease-out); }

@@ -23,6 +23,8 @@ let view = "landing", sheet = null, tmpSeed = "";
 let asset = 1, proving = false, revealBalance = false, reveals = new Set();
 let discCanvas = null, disc = null, heartbeat = 0;
 let fr = null; // { address, status: {hasTrust, raw} } — connected Freighter account
+let denom = 1;            // the unit the total balance is shown in (an asset id)
+let prices = { ethUsd: 3000 }; // WETH/ETH price in USD (fetched; fallback)
 
 // ---------- amount helpers ----------
 const assetById = (id) => (CFG.assets || []).find((a) => Number(a.id) === Number(id));
@@ -42,6 +44,21 @@ function toHuman(raw, d) {
 }
 const balanceOf = (id) => notes.filter((n) => Number(n.assetId) === Number(id)).reduce((a, n) => a + n.amount, 0n);
 const noteCount = (id) => notes.filter((n) => Number(n.assetId) === Number(id)).length;
+// portfolio valuation: USDC = $1, WETH = ETH price. The total can be expressed
+// in any asset's unit (the home toggle).
+const humanBal = (id) => Number(toHuman(balanceOf(id), decOf(id)));
+// USD value of one unit of an asset: WETH/ETH = ETH price, stablecoins ≈ $1.
+const assetUsd = (id) => (/ETH/i.test(symOf(id)) ? prices.ethUsd : 1);
+const totalUsd = () => (CFG.assets || []).reduce((s, a) => s + humanBal(a.id) * assetUsd(a.id), 0);
+const totalInDenom = () => totalUsd() / assetUsd(denom);
+const fmtNum = (n, dp) => (isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: dp }) : "0");
+async function fetchPrices() {
+  try {
+    const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd");
+    const j = await r.json();
+    if (j?.ethereum?.usd) { prices.ethUsd = j.ethereum.usd; if (ME) render(); }
+  } catch { /* keep fallback */ }
+}
 const short = (s, n = 5) => (s && s.length > 2 * n + 1 ? `${s.slice(0, n)}…${s.slice(-n)}` : s || "");
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -291,8 +308,9 @@ function wireConnect() {
 // ---- home ----
 function homeView() {
   const assets = CFG.assets || [];
-  const bal = toHuman(balanceOf(asset), decOf(asset));
-  const nc = noteCount(asset);
+  const total = totalInDenom();
+  const totalStr = assetUsd(denom) > 1 ? fmtNum(total, 6) : fmtNum(total, 2);
+  const holdings = assets.filter((a) => balanceOf(a.id) > 0n);
   return `<div class="screen home">
     <header class="bar">
       ${brand}
@@ -304,11 +322,10 @@ function homeView() {
 
     <section class="hero">
       <div class="hero-balance" id="reveal-bal">
-        <span class="amt">${esc(bal)}</span>
-        <span class="sym">${esc(symOf(asset))}</span>
+        <span class="amt">${esc(totalStr)}</span>
+        <span class="sym">${esc(symOf(denom))}</span>
       </div>
-      ${assets.length > 1 ? `<div class="asset-tabs">${assets.map((a) => `<button class="asset-tab ${a.id === asset ? "on" : ""}" data-asset="${a.id}">${esc(a.symbol)}</button>`).join("")}</div>` : ""}
-      ${nc > 1 ? `<button class="merge-link" id="merge">Merge ${nc} notes</button>` : ""}
+      ${assets.length > 1 ? `<div class="asset-tabs">${assets.map((a) => `<button class="asset-tab ${a.id === denom ? "on" : ""}" data-denom="${a.id}">${esc(a.symbol)}</button>`).join("")}</div>` : ""}
     </section>
 
     <nav class="actions">
@@ -320,10 +337,25 @@ function homeView() {
 
     <div class="terminator"></div>
 
-    <section class="activity">
-      <div class="sec-h"><span>Activity</span><button class="link sm" id="go-audit">Auditor view</button></div>
-      ${history.length ? history.slice(0, 8).map(activityRow).join("") : `<p class="empty">Nothing has crossed the horizon yet.</p>`}
+    <section class="holdings">
+      <div class="sec-h"><span>Your tokens</span><button class="link sm" id="go-audit">Auditor view</button></div>
+      ${holdings.length ? holdings.map(holdingRow).join("") : `<p class="empty">No tokens in shadow yet — deposit to begin.</p>`}
     </section>
+
+    ${history.length ? `<section class="activity">
+      <div class="sec-h"><span>Activity</span></div>
+      ${history.slice(0, 6).map(activityRow).join("")}
+    </section>` : ""}
+  </div>`;
+}
+function holdingRow(a) {
+  const bal = toHuman(balanceOf(a.id), decOf(a.id));
+  const nc = noteCount(a.id);
+  const usd = humanBal(a.id) * assetUsd(a.id);
+  return `<div class="hrow">
+    <span class="hico">${esc(a.symbol[0])}</span>
+    <span class="hrow-main"><span class="hsym">${esc(a.symbol)}</span>${nc > 1 ? `<button class="merge-link sm" data-merge="${a.id}">merge ${nc} notes</button>` : ""}</span>
+    <span class="hrow-amt"><span class="hbal">${esc(bal)}</span><span class="husd">$${esc(fmtNum(usd, 2))}</span></span>
   </div>`;
 }
 function activityRow(e, i) {
@@ -344,8 +376,9 @@ function wireHome() {
   $("#copyaddr").onclick = () => { navigator.clipboard?.writeText(ME.address); toast("Address copied"); };
   // balance is always shown — no reveal toggle
   $("#go-audit").onclick = () => { view = "auditor"; render(); };
-  const m = $("#merge"); if (m) m.onclick = () => runAction("merge", { assetId: asset });
-  document.querySelectorAll(".asset-tab").forEach((b) => b.onclick = () => { asset = Number(b.dataset.asset); render(); });
+  // toggle = the unit the total is shown in (denomination), not an asset filter
+  document.querySelectorAll(".asset-tab").forEach((b) => b.onclick = () => { denom = Number(b.dataset.denom); render(); });
+  document.querySelectorAll(".merge-link[data-merge]").forEach((b) => b.onclick = () => runAction("merge", { assetId: Number(b.dataset.merge) }));
   document.querySelectorAll(".act").forEach((b) => b.onclick = async () => { sheet = b.dataset.sheet; render(); if (sheet === "deposit" && fr) { await refreshFr(); render(); } });
   document.querySelectorAll(".row-reveal").forEach((b) => b.onclick = () => { const k = b.dataset.rev; reveals.has(k) ? reveals.delete(k) : reveals.add(k); render(); });
 }
@@ -476,7 +509,8 @@ function toast(msg) {
   await initPoseidon();
   await initAuditor();
   try { CFG = await (await fetch("/api/config")).json(); } catch { CFG = { error: "Run the relayer (npm run web:server) and init the pool (npm run web:init)." }; }
-  if (CFG.assets?.length) asset = CFG.assets[0].id;
+  if (CFG.assets?.length) { asset = CFG.assets[0].id; denom = CFG.assets[0].id; }
+  fetchPrices(); // non-blocking; re-renders when the ETH/USD price lands
   const saved = localStorage.getItem(SEED_KEY);
   if (saved && !CFG.error) { try { ME = deriveIdentity(saved); history = JSON.parse(localStorage.getItem(histKey()) || "[]"); view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
   render();

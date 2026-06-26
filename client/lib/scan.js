@@ -8,14 +8,15 @@ const { decryptAuditOutput } = require("./auditor");
 
 const RPC_URL = process.env.STELLAR_RPC || "https://soroban-testnet.stellar.org";
 
-// The Soroban RPC only retains events for a limited window (~24h on testnet).
-// Clamp the requested startLedger into the allowed range so getEvents never hard
-// -fails over time; a production deployment would persist events in an indexer.
-const RETENTION = 17000;
+// The Soroban RPC only retains events for a limited window. Clamp the requested
+// startLedger up to the RPC's ACTUAL oldest retained ledger (from getHealth) so
+// getEvents never hard-fails on a too-old start — but never higher, so we don't
+// skip the pool's events. (A production deployment would persist events in an
+// indexer and not depend on RPC retention at all.)
 async function clampStart(server, startLedger) {
   try {
-    const latest = (await server.getLatestLedger()).sequence;
-    return Math.max(1, Math.max(startLedger, latest - RETENTION));
+    const oldest = (await server.getHealth()).oldestLedger;
+    return oldest ? Math.max(startLedger, oldest) : Math.max(1, startLedger);
   } catch {
     return Math.max(1, startLedger);
   }
