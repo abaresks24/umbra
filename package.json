@@ -12,7 +12,8 @@
     "web:server": "node web/server.js",
     "web:dev": "vite --config web/vite.config.js",
     "web:build": "vite build --config web/vite.config.js",
-    "web:smoke": "node web/smoke.cjs"
+    "web:smoke": "node web/smoke.cjs",
+    "ext:build": "vite build --config web/vite.ext.config.js"
   },
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",

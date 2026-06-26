@@ -19,6 +19,10 @@ body {
   text-rendering: optimizeLegibility;
 }
 #app { min-height: 100%; min-height: 100dvh; }
+/* MV3 popup: fix a phone-sized canvas so Chrome sizes the popup correctly */
+html.ext, html.ext body { width: 392px; height: 600px; overflow-x: hidden; }
+html.ext #app { min-height: 600px; }
+html.ext .screen { min-height: 600px; }
 ::selection { background: rgba(168, 126, 54, 0.25); }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 3px; }
 button { font-family: inherit; color: inherit; cursor: pointer; border: 0; background: none; }

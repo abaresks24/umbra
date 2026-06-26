@@ -18,6 +18,14 @@ const WASM_URL = "/transfer.wasm", ZKEY_URL = "/transfer_final.zkey";
 const SEED_KEY = "umbra-seed";
 const $ = (s) => document.querySelector(s);
 
+// Build targets: the web app talks to same-origin /api; the MV3 extension popup
+// (VITE_EXT=1) talks to the deployed relayer (VITE_API_BASE) and proves single-
+// threaded so snarkjs never spawns a blob: Worker the extension CSP would block.
+// Freighter isn't reachable from an extension popup, so deposits open the web app.
+const API_BASE = import.meta.env.VITE_API_BASE || "";
+const IS_EXT = import.meta.env.VITE_EXT === "1";
+if (IS_EXT) { try { window.Worker = undefined; self.Worker = undefined; } catch {} document.documentElement.classList.add("ext"); }
+
 let CFG, ME = null, notes = [], log = [], history = [];
 let view = "landing", sheet = null, tmpSeed = "";
 let asset = 1, proving = false, revealBalance = false, reveals = new Set();
@@ -120,7 +128,7 @@ async function proveAndSubmit(params, { recipient, extAmount, assetId }) {
   const r = buildWitness({ ...params, assetId, auditor: { pubX: CFG.auditorPubX, pubY: CFG.auditorPubY } });
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(r.witness, WASM_URL, ZKEY_URL);
   say("proof formed — crossing the horizon…");
-  const res = await fetch("/api/submit", {
+  const res = await fetch(`${API_BASE}/api/submit`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ proof: proofToHex(proof), public: publicToHex(publicSignals), caller: CFG.userAddr, recipient, extAmount: String(extAmount), fee: "0", enc1: r.enc1, enc2: r.enc2 }),
   });
@@ -397,7 +405,12 @@ function sheetView() {
     title = "Into nightfall"; btn = null; // wired separately to Freighter
     hint = "Deposit from your own Stellar wallet — public tokens enter the umbra.";
     const a = assetById(asset);
-    if (!fr) {
+    if (IS_EXT) {
+      // Freighter can't be reached from inside an extension popup — send the user
+      // to the web app to sign the deposit; the popup picks up the note on rescan.
+      body = `${sel}<p class="faucet">Deposits are signed with Freighter, which lives in the browser tab. Open Umbra on the web to deposit — your new balance appears here automatically.</p>
+        <button class="btn primary" id="ext-open-web">Open Umbra on the web ↗</button>`;
+    } else if (!fr) {
       body = `${sel}<button class="btn primary" id="fr-connect">Connect Freighter</button>
         <p class="faucet">No ${esc(a.symbol)} yet? ${a.faucet === "circle"
           ? `Get testnet USDC at <a href="${esc(CFG.circleFaucet)}" target="_blank">faucet.circle.com</a>`
@@ -440,6 +453,7 @@ function wireSheet() {
   document.querySelectorAll(".seg-b").forEach((b) => b.onclick = async () => { asset = Number(b.dataset.sasset); if (fr) await refreshFr(); render(); });
   const copy = $("#s-copy"); if (copy) copy.onclick = () => { navigator.clipboard?.writeText(ME.address); copy.textContent = "Copied"; };
   // Freighter deposit controls
+  const extOpen = $("#ext-open-web"); if (extOpen) extOpen.onclick = () => window.open(API_BASE || "https://umbra-wallet.vercel.app", "_blank");
   const xf = $("#xlm-faucet"); if (xf && fr) xf.href = `${CFG.friendbot}?addr=${fr.address}`;
   const conn = $("#fr-connect"); if (conn) conn.onclick = async () => { try { await doConnectFreighter(); } catch (e) { toast(e.message || "connect failed"); } };
   const fdisc = $("#fr-disc"); if (fdisc) fdisc.onclick = () => { fr = null; toast("Freighter disconnected — switch account in Freighter, then reconnect"); render(); };
@@ -508,7 +522,7 @@ function toast(msg) {
 (async () => {
   await initPoseidon();
   await initAuditor();
-  try { CFG = await (await fetch("/api/config")).json(); } catch { CFG = { error: "Run the relayer (npm run web:server) and init the pool (npm run web:init)." }; }
+  try { CFG = await (await fetch(`${API_BASE}/api/config`)).json(); } catch { CFG = { error: "Run the relayer (npm run web:server) and init the pool (npm run web:init)." }; }
   if (CFG.assets?.length) { asset = CFG.assets[0].id; denom = CFG.assets[0].id; }
   fetchPrices(); // non-blocking; re-renders when the ETH/USD price lands
   const saved = localStorage.getItem(SEED_KEY);

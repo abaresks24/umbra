@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Umbra — private payments on Stellar",
+  "version": "0.1.0",
+  "description": "A privacy wallet for Stellar. Balances and amounts stay in shadow — proofs are generated on your device.",
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "Umbra",
+    "default_icon": { "128": "icon128.png" }
+  },
+  "icons": { "128": "icon128.png" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://umbra-wallet.vercel.app https://soroban-testnet.stellar.org https://api.coingecko.com https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:"
+  },
+  "host_permissions": [
+    "https://umbra-wallet.vercel.app/*",
+    "https://soroban-testnet.stellar.org/*",
+    "https://api.coingecko.com/*"
+  ]
+}
