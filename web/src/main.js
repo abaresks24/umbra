@@ -291,11 +291,14 @@ const landingView = () => `<div class="screen center landing">
 function wireLanding() {
   $("#go-create").onclick = () => { tmpSeed = randomSeed(); view = "create"; render(); };
   $("#go-connect").onclick = () => { view = "connect"; render(); };
-  $("#go-docs").onclick = (e) => { e.preventDefault(); openDocs(); };
+  // the "Read the docs" anchor navigates natively via href="#docs" (hashchange)
 }
-function openDocs() { if (location.hash !== "#docs") history.pushState(null, "", "#docs"); view = "docs"; render(); window.scrollTo(0, 0); }
+// open/close docs purely through the URL hash — a plain location.hash assignment
+// reliably fires `hashchange`, which is the single place that renders the route.
+function openDocs() { if (location.hash === "#docs") renderDocs(); else location.hash = "docs"; }
+function renderDocs() { if (view !== "docs") { view = "docs"; render(); } window.scrollTo(0, 0); }
 function wireDocs() {
-  const back = () => { if (location.hash) history.pushState(null, "", location.pathname); view = ME ? "home" : "landing"; render(); };
+  const back = () => { if (location.hash === "#docs") location.hash = ""; else { view = ME ? "home" : "landing"; render(); } };
   $("#doc-back").onclick = back;
   const b2 = $("#doc-back-2"); if (b2) b2.onclick = back;
   // scroll-spy: highlight the contents entry whose section is in view
@@ -412,7 +415,7 @@ function activityRow(e, i) {
 function wireHome() {
   placeDisc();
   $("#disconnect").onclick = disconnect;
-  $("#go-docs").onclick = openDocs;
+  $("#go-docs").onclick = () => openDocs();
   $("#copyaddr").onclick = () => { navigator.clipboard?.writeText(ME.address); toast("Address copied"); };
   // balance is always shown — no reveal toggle
   $("#go-audit").onclick = () => { view = "auditor"; render(); };
@@ -560,7 +563,11 @@ function toast(msg) {
   const saved = localStorage.getItem(SEED_KEY);
   if (saved && !CFG.error) { try { ME = deriveIdentity(saved); history = JSON.parse(localStorage.getItem(histKey()) || "[]"); view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
   if (location.hash === "#docs") view = "docs"; // shareable /#docs deep-link
-  window.addEventListener("hashchange", () => { if (location.hash === "#docs") { if (view !== "docs") { view = "docs"; render(); window.scrollTo(0, 0); } } });
+  // route the docs view off the URL hash — handles enter (#docs) and leave (cleared)
+  window.addEventListener("hashchange", () => {
+    if (location.hash === "#docs") renderDocs();
+    else if (view === "docs") { view = ME ? "home" : "landing"; render(); }
+  });
   render();
   if (ME) rescan();
 })();
