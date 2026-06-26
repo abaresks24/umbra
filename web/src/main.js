@@ -17,6 +17,7 @@ import { connectFreighter, assetStatus, addTrustline, freighterSign, freighterIn
 
 const WASM_URL = "/transfer.wasm", ZKEY_URL = "/transfer_final.zkey";
 const SEED_KEY = "umbra-seed";
+const EXPLORER = "https://stellar.expert/explorer/testnet"; // tx links in Activity
 const $ = (s) => document.querySelector(s);
 
 // Build targets: the web app talks to same-origin /api; the MV3 extension popup
@@ -136,27 +137,28 @@ async function proveAndSubmit(params, { recipient, extAmount, assetId }) {
   const j = await res.json();
   if (!j.ok) throw new Error(j.error);
   say("settled in shadow");
+  return j.hash;
 }
 const enc = (recipients) => ({ senderViewPub: ME.viewPub, recipients });
 
 async function doShield(amount, assetId) {
   const note = new Note({ amount, assetId, owner: ME.spend });
-  await proveAndSubmit({ tree: window.__tree, inputs: [], outputs: [note], publicAmount: amount, extData: { recipient: CFG.userAddr, extAmount: String(amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: amount, assetId });
-  scheduleRescans();
+  const hash = await proveAndSubmit({ tree: window.__tree, inputs: [], outputs: [note], publicAmount: amount, extData: { recipient: CFG.userAddr, extAmount: String(amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: amount, assetId });
+  scheduleRescans(); return hash;
 }
 async function doSend(amount, assetId, addr) {
   const { chosen, sum } = selectInputs(amount, assetId);
   const rcpt = decodeAddress(addr);
   const toR = new Note({ amount, assetId, owner: rcpt.spendPub });
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
-  await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [toR, change], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([rcpt.viewPub, ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
-  markSpent(chosen); scheduleRescans();
+  const hash = await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [toR, change], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([rcpt.viewPub, ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
+  markSpent(chosen); scheduleRescans(); return hash;
 }
 async function doUnshield(amount, assetId, stellarAddr) {
   const { chosen, sum } = selectInputs(amount, assetId);
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
-  await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [change], publicAmount: -amount, extData: { recipient: stellarAddr, extAmount: String(-amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: stellarAddr, extAmount: -amount, assetId });
-  markSpent(chosen); scheduleRescans();
+  const hash = await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [change], publicAmount: -amount, extData: { recipient: stellarAddr, extAmount: String(-amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: stellarAddr, extAmount: -amount, assetId });
+  markSpent(chosen); scheduleRescans(); return hash;
 }
 async function doConsolidate(assetId) {
   const mine = notes.filter((n) => Number(n.assetId) === Number(assetId)).sort((a, b) => (a.amount < b.amount ? -1 : 1));
@@ -197,14 +199,14 @@ async function runDeposit(amt, assetId) {
     say("entering the umbra — proving privately…");
     const { proof, publicSignals } = await snarkjs.groth16.fullProve(r.witness, WASM_URL, ZKEY_URL);
     say("sign the deposit in Freighter…");
-    await submitTransact({
+    const hash = await submitTransact({
       poolId: CFG.poolId, caller: fr.address, recipient: fr.address,
       proofHex: proofToHex(proof), publicHex: publicToHex(publicSignals),
       extAmount: amt.toString(), fee: 0, enc1: r.enc1, enc2: r.enc2,
       signXdr: freighterSign, rpcUrl: CFG.rpc,
     });
     say("settled in shadow");
-    pushHistory({ dir: "deposit", amount: amt.toString(), assetId });
+    pushHistory({ dir: "deposit", amount: amt.toString(), assetId, hash });
     disc?.settle(); sheet = null; await refreshFr();
   } catch (e) { say(e.message || String(e)); disc?.idle(); proving = false; render(); return; }
   proving = false; setTimeout(() => disc?.idle(), 1400); scheduleRescans(); render();
@@ -216,11 +218,12 @@ async function runAction(kind, args) {
   proving = true; render(); disc?.occult();
   try {
     await rescan();
-    if (kind === "deposit") await doShield(args.amt, args.assetId);
-    else if (kind === "send") await doSend(args.amt, args.assetId, args.addr);
-    else if (kind === "withdraw") await doUnshield(args.amt, args.assetId, args.addr);
+    let hash;
+    if (kind === "deposit") hash = await doShield(args.amt, args.assetId);
+    else if (kind === "send") hash = await doSend(args.amt, args.assetId, args.addr);
+    else if (kind === "withdraw") hash = await doUnshield(args.amt, args.assetId, args.addr);
     else if (kind === "merge") await doConsolidate(args.assetId);
-    if (kind !== "merge") pushHistory({ dir: kind, amount: args.amt.toString(), assetId: args.assetId });
+    if (kind !== "merge") pushHistory({ dir: kind, amount: args.amt.toString(), assetId: args.assetId, hash });
     disc?.settle();
     sheet = null;
   } catch (e) { say(e.message || String(e)); disc?.idle(); proving = false; render(); return; }
@@ -253,6 +256,7 @@ function placeDisc() {}
 
 function render() {
   const app = $("#app");
+  document.body.classList.toggle("plain-bg", view === "docs"); // docs gets a flat, uniform ground
   if (!CFG) { app.innerHTML = `<div class="screen center"><img class="hero-eclipse" src="/logo.png" alt="" style="opacity:.6"/></div>`; return; }
   if (CFG.error) { app.innerHTML = `<div class="screen center"><p class="muted">${esc(CFG.error)}</p></div>`; return; }
 
@@ -294,6 +298,15 @@ function wireDocs() {
   const back = () => { if (location.hash) history.pushState(null, "", location.pathname); view = ME ? "home" : "landing"; render(); };
   $("#doc-back").onclick = back;
   const b2 = $("#doc-back-2"); if (b2) b2.onclick = back;
+  // scroll-spy: highlight the contents entry whose section is in view
+  const links = new Map([...document.querySelectorAll(".doc-nav-list a[data-doc]")].map((a) => [a.dataset.doc, a]));
+  const spy = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) {
+      links.forEach((a) => a.classList.remove("on"));
+      links.get(e.target.id)?.classList.add("on");
+    }
+  }, { rootMargin: "-12% 0px -70% 0px" });
+  document.querySelectorAll(".doc section[id]").forEach((s) => spy.observe(s));
 }
 
 const createView = () => `<div class="screen center pane">
@@ -364,10 +377,10 @@ function homeView() {
       ${holdings.length ? holdings.map(holdingRow).join("") : `<p class="empty">No tokens in shadow yet — deposit to begin.</p>`}
     </section>
 
-    ${history.length ? `<section class="activity">
+    <section class="activity">
       <div class="sec-h"><span>Activity</span></div>
-      ${history.slice(0, 6).map(activityRow).join("")}
-    </section>` : ""}
+      ${history.length ? history.map(activityRow).join("") : `<p class="empty">Nothing has crossed the horizon yet.</p>`}
+    </section>
   </div>`;
 }
 function holdingRow(a) {
@@ -386,11 +399,15 @@ function activityRow(e, i) {
   const amt = lit ? `${toHuman(e.amount, decOf(e.assetId))} ${symOf(e.assetId)}` : mark;
   const label = { deposit: "Deposited", withdraw: "Withdrew", send: "Sent" }[e.dir] || e.dir;
   const when = new Date(e.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  return `<button class="arow row-reveal ${lit ? "lit" : ""}" data-rev="h${i}">
-    <span class="ecl ${e.dir}">${dirIcon}</span>
-    <span class="arow-main"><span class="dir">${label}</span><span class="when">${esc(when)}</span></span>
-    <span class="amt">${esc(amt)}</span>
-  </button>`;
+  const link = e.hash ? `<a class="arow-tx" href="${EXPLORER}/tx/${esc(e.hash)}" target="_blank" rel="noopener" title="View on stellar.expert" aria-label="View transaction on explorer">↗</a>` : "";
+  return `<div class="arow-wrap">
+    <button class="arow row-reveal ${lit ? "lit" : ""}" data-rev="h${i}">
+      <span class="ecl ${e.dir}">${dirIcon}</span>
+      <span class="arow-main"><span class="dir">${label}</span><span class="when">${esc(when)}</span></span>
+      <span class="amt">${esc(amt)}</span>
+    </button>
+    ${link}
+  </div>`;
 }
 function wireHome() {
   placeDisc();
