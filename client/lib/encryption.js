@@ -51,12 +51,20 @@ function packEnc(recipCtHex, auditorCtHex) {
   return Buffer.concat([u16(r.length), r, u16(a.length), a]).toString("hex");
 }
 function unpackEnc(encHex) {
-  const b = Buffer.from(encHex, "hex");
-  const rl = b.readUInt16BE(0);
-  const recip = b.subarray(2, 2 + rl);
-  const al = b.readUInt16BE(2 + rl);
-  const aud = b.subarray(2 + rl + 2, 2 + rl + 2 + al);
-  return { recipCt: recip.toString("hex"), auditorCt: aud.toString("hex") };
+  // Be defensive: malformed/truncated blobs (e.g. legacy events with an empty
+  // enc) must not throw a buffer-bounds error and crash the whole scan.
+  try {
+    const b = Buffer.from(encHex, "hex");
+    if (b.length < 4) return { recipCt: "", auditorCt: "" };
+    const rl = b.readUInt16BE(0);
+    if (2 + rl + 2 > b.length) return { recipCt: "", auditorCt: "" };
+    const recip = b.subarray(2, 2 + rl);
+    const al = b.readUInt16BE(2 + rl);
+    const aud = b.subarray(2 + rl + 2, 2 + rl + 2 + al);
+    return { recipCt: recip.toString("hex"), auditorCt: aud.toString("hex") };
+  } catch {
+    return { recipCt: "", auditorCt: "" };
+  }
 }
 
 // Build the enc blob for one output note, encrypted to the RECIPIENT's viewing
