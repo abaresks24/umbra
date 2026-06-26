@@ -64,6 +64,8 @@ code { font-family: var(--font-mono); }
 /* — landing / panes — */
 .landing .title { margin-top: 2px; }
 .landing .stack { margin-top: 8px; }
+.ext-cta { margin-top: 18px; font-family: var(--font-ui); font-size: var(--t-sm); font-weight: 600; color: var(--ink-soft); text-decoration: none; letter-spacing: 0.2px; border-bottom: 1px solid var(--line); padding-bottom: 2px; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.ext-cta:hover { color: var(--accent-deep); border-color: var(--accent-deep); }
 .hero-logo { width: clamp(200px, 56vw, 260px); height: auto; margin-bottom: 2px; }
 /* dictionary flourish under the wordmark on landing */
 .phonetic { font-family: var(--font-display); font-style: italic; font-weight: 400; color: var(--ink-soft); font-size: 1.05rem; letter-spacing: 0.3px; margin-top: -13px; }

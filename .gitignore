@@ -17,3 +17,4 @@ dist/
 !web/public/transfer_final.zkey
 web/public/DA.jpg
 .vercel
+extension/umbra-extension.zip
