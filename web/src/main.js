@@ -78,6 +78,33 @@ const say = (m) => { log.unshift(`${new Date().toLocaleTimeString().slice(0, 8)}
 // ---------- identity ----------
 const histKey = () => `umbra-hist-${ME.seed.slice(0, 8)}`;
 const spentKey = () => `umbra-spent-${ME.seed.slice(0, 8)}`;
+const seenKey = () => `umbra-seen-${ME.seed.slice(0, 8)}`; // commitments already in activity
+const selfKey = () => `umbra-self-${ME.seed.slice(0, 8)}`; // commitments WE created (not received)
+
+// Remember notes we created ourselves (deposit / change), so the scan can tell
+// our own incoming notes apart from transfers SENT TO US by someone else.
+function noteSelf(ns) {
+  const s = new Set(JSON.parse(localStorage.getItem(selfKey()) || "[]"));
+  ns.forEach((n) => s.add(n.commitment().toString()));
+  localStorage.setItem(selfKey(), JSON.stringify([...s]));
+}
+// Turn newly-discovered incoming notes that we did NOT create into "Received"
+// activity entries (the sender records their send; the recipient only learns of
+// it by scanning the chain — this is what makes it show up for them too).
+function recordReceived() {
+  const seen = new Set(JSON.parse(localStorage.getItem(seenKey()) || "[]"));
+  const self = new Set(JSON.parse(localStorage.getItem(selfKey()) || "[]"));
+  let added = false;
+  // newest first on-chain (highest index) so the activity reads in time order
+  for (const n of [...notes].sort((a, b) => a.index - b.index)) {
+    const c = n.note.commitment().toString();
+    if (seen.has(c)) continue;
+    seen.add(c);
+    if (!self.has(c)) { pushHistory({ dir: "receive", amount: n.amount.toString(), assetId: Number(n.assetId) }); added = true; }
+  }
+  localStorage.setItem(seenKey(), JSON.stringify([...seen]));
+  return added;
+}
 function connect(seed) {
   ME = deriveIdentity(seed);
   localStorage.setItem(SEED_KEY, ME.seed);
@@ -106,6 +133,7 @@ async function rescan() {
       const h = nullifierHex(n.note.nullifier(n.index));
       return !onchainSpent.has(h) && !localSpent.has(h);
     });
+    recordReceived(); // surface incoming transfers in Activity
     say(`${notes.length} note${notes.length === 1 ? "" : "s"} in shadow`);
   } catch (e) { say("could not reach the network — retrying soon"); }
   if (!proving) render();
@@ -143,6 +171,7 @@ const enc = (recipients) => ({ senderViewPub: ME.viewPub, recipients });
 
 async function doShield(amount, assetId) {
   const note = new Note({ amount, assetId, owner: ME.spend });
+  noteSelf([note]);
   const hash = await proveAndSubmit({ tree: window.__tree, inputs: [], outputs: [note], publicAmount: amount, extData: { recipient: CFG.userAddr, extAmount: String(amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: amount, assetId });
   scheduleRescans(); return hash;
 }
@@ -151,6 +180,7 @@ async function doSend(amount, assetId, addr) {
   const rcpt = decodeAddress(addr);
   const toR = new Note({ amount, assetId, owner: rcpt.spendPub });
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
+  noteSelf([change]); // toR belongs to the recipient, the change is ours
   const hash = await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [toR, change], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([rcpt.viewPub, ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
   markSpent(chosen); scheduleRescans(); return hash;
 }
@@ -164,6 +194,7 @@ async function doUnshield(amount, assetId, stellarAddr) {
   if (!st.hasTrust) throw new Error(`Destination has no ${a.symbol} trustline — it can't receive ${a.symbol}. Add the trustline there first.`);
   const { chosen, sum } = selectInputs(amount, assetId);
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
+  noteSelf([change]);
   const hash = await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [change], publicAmount: -amount, extData: { recipient: stellarAddr, extAmount: String(-amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: stellarAddr, extAmount: -amount, assetId });
   markSpent(chosen); scheduleRescans(); return hash;
 }
@@ -172,6 +203,7 @@ async function doConsolidate(assetId) {
   if (mine.length < 2) throw new Error("nothing to merge");
   const [n1, n2] = mine;
   const merged = new Note({ amount: n1.amount + n2.amount, assetId, owner: ME.spend });
+  noteSelf([merged]);
   await proveAndSubmit({ tree: window.__tree, inputs: [{ note: n1.note, index: n1.index }, { note: n2.note, index: n2.index }], outputs: [merged], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
   markSpent([n1, n2]); scheduleRescans();
 }
@@ -198,6 +230,7 @@ async function runDeposit(amt, assetId) {
   try {
     await rescan();
     const note = new Note({ amount: amt, assetId, owner: ME.spend });
+    noteSelf([note]);
     const r = buildWitness({
       tree: window.__tree, inputs: [], outputs: [note], publicAmount: amt, assetId,
       extData: { recipient: fr.address, extAmount: String(amt), fee: "0" }, enc: enc([ME.viewPub]),
@@ -405,9 +438,9 @@ function holdingRow(a) {
   </div>`;
 }
 function activityRow(e, i) {
-  const dirIcon = { deposit: "↧", withdraw: "↥", send: "↗" }[e.dir] || "◐";
+  const dirIcon = { deposit: "↧", withdraw: "↥", send: "↗", receive: "↙" }[e.dir] || "◐";
   const amt = `${toHuman(e.amount, decOf(e.assetId))} ${symOf(e.assetId)}`; // always shown
-  const label = { deposit: "Deposited", withdraw: "Withdrew", send: "Sent" }[e.dir] || e.dir;
+  const label = { deposit: "Deposited", withdraw: "Withdrew", send: "Sent", receive: "Received" }[e.dir] || e.dir;
   const when = new Date(e.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const link = e.hash ? `<a class="arow-tx" href="${EXPLORER}/tx/${esc(e.hash)}" target="_blank" rel="noopener" title="View on stellar.expert" aria-label="View transaction on explorer">↗</a>` : "";
   return `<div class="arow-wrap">
