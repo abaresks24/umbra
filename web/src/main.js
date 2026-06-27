@@ -157,7 +157,7 @@ async function rescan() {
     lastGroups = groups; lastOwned = owned;
     history = mergeActivity(deriveActivity(groups, owned)); // full history, reconstructed from chain
     say(`${notes.length} note${notes.length === 1 ? "" : "s"} in shadow`);
-  } catch (e) { say("could not reach the network — retrying soon"); }
+  } catch (e) { say("couldn't reach the network. retrying soon"); }
   if (!proving) render();
 }
 function scheduleRescans() { [6000, 14000, 25000, 40000].forEach((ms) => setTimeout(rescan, ms)); }
@@ -171,15 +171,15 @@ function selectInputs(amount, assetId) {
   const chosen = []; let sum = 0n;
   for (const n of mine) { if (sum >= amount) break; chosen.push(n); sum += n.amount; }
   if (sum < amount) throw new Error(`not enough ${symOf(assetId)} in shadow`);
-  if (chosen.length > 2) throw new Error("this amount spans more than 2 notes — merge first");
+  if (chosen.length > 2) throw new Error("this amount spans more than 2 notes. merge them first");
   return { chosen, sum };
 }
 
 async function proveAndSubmit(params, { recipient, extAmount, assetId }) {
-  say("entering the umbra — proving privately…");
+  say("entering the umbra. proving privately…");
   const r = buildWitness({ ...params, assetId, auditor: { pubX: CFG.auditorPubX, pubY: CFG.auditorPubY } });
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(r.witness, WASM_URL, ZKEY_URL);
-  say("proof formed — crossing the horizon…");
+  say("proof formed. crossing the horizon…");
   const res = await fetch(`${API_BASE}/api/submit`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ proof: proofToHex(proof), public: publicToHex(publicSignals), caller: CFG.userAddr, recipient, extAmount: String(extAmount), fee: "0", enc1: r.enc1, enc2: r.enc2 }),
@@ -210,8 +210,8 @@ async function doUnshield(amount, assetId, stellarAddr) {
   // a clear message instead of a cryptic failed transaction.
   const a = assetById(assetId);
   const st = await assetStatus(stellarAddr, a.code, a.issuer, a.decimals);
-  if (!st.exists) throw new Error(`Destination ${short(stellarAddr, 4)} isn't activated on Stellar yet — fund it first.`);
-  if (!st.hasTrust) throw new Error(`Destination has no ${a.symbol} trustline — it can't receive ${a.symbol}. Add the trustline there first.`);
+  if (!st.exists) throw new Error(`Destination ${short(stellarAddr, 4)} isn't activated on Stellar yet. Fund it first.`);
+  if (!st.hasTrust) throw new Error(`Destination has no ${a.symbol} trustline, so it can't receive ${a.symbol}. Add the trustline there first.`);
   const { chosen, sum } = selectInputs(amount, assetId);
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
   const hash = await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [change], publicAmount: -amount, extData: { recipient: stellarAddr, extAmount: String(-amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: stellarAddr, extAmount: -amount, assetId });
@@ -253,7 +253,7 @@ async function runDeposit(amt, assetId) {
       extData: { recipient: fr.address, extAmount: String(amt), fee: "0" }, enc: enc([ME.viewPub]),
       auditor: { pubX: CFG.auditorPubX, pubY: CFG.auditorPubY },
     });
-    say("entering the umbra — proving privately…");
+    say("entering the umbra. proving privately…");
     const { proof, publicSignals } = await snarkjs.groth16.fullProve(r.witness, WASM_URL, ZKEY_URL);
     say("sign the deposit in Freighter…");
     const hash = await submitTransact({
@@ -373,7 +373,7 @@ function wireDocs() {
 const createView = () => `<div class="screen center pane">
   ${brand}
   <h2 class="title sm">Your private key</h2>
-  <p class="lede">This single key is the only way back to your wallet. Keep it somewhere safe — it cannot be recovered.</p>
+  <p class="lede">This single key is the only way back to your wallet. Keep it somewhere safe, because it can't be recovered.</p>
   <div class="keybox"><code id="seedval">${esc(tmpSeed)}</code></div>
   <button class="btn ghost wide" id="copyseed">Copy key</button>
   <label class="check"><input type="checkbox" id="saved"/> <span>I've saved my private key</span></label>
@@ -435,7 +435,7 @@ function homeView() {
 
     <section class="holdings">
       <div class="sec-h"><span>Your tokens</span><button class="link sm" id="go-audit">Auditor view</button></div>
-      ${holdings.length ? holdings.map(holdingRow).join("") : `<p class="empty">No tokens in shadow yet — deposit to begin.</p>`}
+      ${holdings.length ? holdings.map(holdingRow).join("") : `<p class="empty">No tokens in shadow yet. Make a deposit to begin.</p>`}
     </section>
 
     <section class="activity">
@@ -495,12 +495,12 @@ function sheetView() {
     body = `${sel}<label class="lbl">Recipient</label><input id="s-addr" class="field mono" placeholder="umbra address (shld_…)" autocomplete="off"/>${amount}`;
   } else if (sheet === "deposit") {
     title = "Into nightfall"; btn = null; // wired separately to Freighter
-    hint = "Deposit from your own Stellar wallet — public tokens enter the umbra.";
+    hint = "Deposit from your own Stellar wallet. Public tokens enter the umbra.";
     const a = assetById(asset);
     if (IS_EXT) {
       // Freighter can't be reached from inside an extension popup — send the user
       // to the web app to sign the deposit; the popup picks up the note on rescan.
-      body = `${sel}<p class="faucet">Deposits are signed with Freighter, which lives in the browser tab. Open Umbra on the web to deposit — your new balance appears here automatically.</p>
+      body = `${sel}<p class="faucet">Deposits are signed with Freighter, which lives in the browser tab. Open Umbra on the web to deposit, and your new balance shows up here automatically.</p>
         <button class="btn primary" id="ext-open-web">Open Umbra on the web ↗</button>`;
     } else if (!fr) {
       body = `${sel}<button class="btn primary" id="fr-connect">Connect Freighter</button>
@@ -548,7 +548,7 @@ function wireSheet() {
   const extOpen = $("#ext-open-web"); if (extOpen) extOpen.onclick = () => window.open(API_BASE || "https://umbra-wallet.vercel.app", "_blank");
   const xf = $("#xlm-faucet"); if (xf && fr) xf.href = `${CFG.friendbot}?addr=${fr.address}`;
   const conn = $("#fr-connect"); if (conn) conn.onclick = async () => { try { await doConnectFreighter(); } catch (e) { toast(e.message || "connect failed"); } };
-  const fdisc = $("#fr-disc"); if (fdisc) fdisc.onclick = () => { fr = null; toast("Freighter disconnected — switch account in Freighter, then reconnect"); render(); };
+  const fdisc = $("#fr-disc"); if (fdisc) fdisc.onclick = () => { fr = null; toast("Freighter disconnected. Switch account in Freighter, then reconnect."); render(); };
   const fref = $("#fr-refresh"); if (fref) fref.onclick = async () => { fref.textContent = "…"; await refreshFr(); render(); };
   const trust = $("#fr-trust"); if (trust) trust.onclick = async () => {
     const a = assetById(asset);
@@ -581,7 +581,7 @@ const auditorView = () => `<div class="screen auditor">
   </header>
   <div class="aud-intro">
     <h2 class="title sm">Lawful light</h2>
-    <p class="lede">The view key breaks one ring of light through the shadow. With it, an auditor reconstructs every note — amounts and parties — while the public sees nothing. Disclosure is enforced inside the proof itself.</p>
+    <p class="lede">The view key breaks one ring of light through the shadow. With it, an auditor reconstructs every note, amounts and parties included, while the public sees nothing. Disclosure is enforced inside the proof itself.</p>
   </div>
   <label class="lbl">Auditor private key</label>
   <textarea id="audit-key" class="field mono" rows="2" placeholder="auditor key"></textarea>
