@@ -10,7 +10,7 @@ import { buildTree } from "../../client/lib/tree";
 import { buildWitness } from "../../client/lib/transaction";
 import { initAuditor } from "../../client/lib/auditor";
 import { randomSeed, deriveIdentity, decodeAddress } from "../../client/lib/identity";
-import { fetchCommitEvents, fetchAuditEvents, fetchSpentNullifiers, nullifierHex, scanOwned, auditEnforced } from "../../client/lib/scan";
+import { fetchTxGroups, fetchCommitEvents, fetchAuditEvents, nullifierHex, scanOwned, auditEnforced } from "../../client/lib/scan";
 import { proofToHex, publicToHex } from "../../scripts/bn254_snark_hex";
 import { submitTransact } from "../../client/lib/soroban";
 import { connectFreighter, assetStatus, addTrustline, freighterSign, freighterInstalled } from "../../client/lib/wallet-connect";
@@ -28,7 +28,8 @@ const API_BASE = import.meta.env.VITE_API_BASE || "";
 const IS_EXT = import.meta.env.VITE_EXT === "1";
 if (IS_EXT) { try { window.Worker = undefined; self.Worker = undefined; } catch {} document.documentElement.classList.add("ext"); }
 
-let CFG, ME = null, notes = [], log = [], history = [];
+let CFG, ME = null, notes = [], log = [], history = [], localHist = [];
+let lastGroups = [], lastOwned = []; // cached chain state for instant activity rebuilds
 let view = "landing", sheet = null, tmpSeed = "";
 let asset = 1, proving = false, revealBalance = false, reveals = new Set();
 let discCanvas = null, disc = null, heartbeat = 0;
@@ -78,40 +79,52 @@ const say = (m) => { log.unshift(`${new Date().toLocaleTimeString().slice(0, 8)}
 // ---------- identity ----------
 const histKey = () => `umbra-hist-${ME.seed.slice(0, 8)}`;
 const spentKey = () => `umbra-spent-${ME.seed.slice(0, 8)}`;
-const seenKey = () => `umbra-seen-${ME.seed.slice(0, 8)}`; // commitments already in activity
-const selfKey = () => `umbra-self-${ME.seed.slice(0, 8)}`; // commitments WE created (not received)
 
-// Remember notes we created ourselves (deposit / change), so the scan can tell
-// our own incoming notes apart from transfers SENT TO US by someone else.
-function noteSelf(ns) {
-  const s = new Set(JSON.parse(localStorage.getItem(selfKey()) || "[]"));
-  ns.forEach((n) => s.add(n.commitment().toString()));
-  localStorage.setItem(selfKey(), JSON.stringify([...s]));
-}
-// Turn newly-discovered incoming notes that we did NOT create into "Received"
-// activity entries (the sender records their send; the recipient only learns of
-// it by scanning the chain — this is what makes it show up for them too).
-function recordReceived() {
-  const raw = localStorage.getItem(seenKey());
-  // First scan on this device = baseline: take everything already owned as known
-  // WITHOUT generating activity, so pre-existing notes (old deposits, change we
-  // can't prove we made here) are never mislabeled "Received". Only notes that
-  // appear AFTER the baseline, and that we didn't create, count as received.
-  const firstScan = raw === null;
-  const seen = new Set(JSON.parse(raw || "[]"));
-  const self = new Set(JSON.parse(localStorage.getItem(selfKey()) || "[]"));
-  for (const n of [...notes].sort((a, b) => a.index - b.index)) {
-    const c = n.note.commitment().toString();
-    if (seen.has(c)) continue;
-    seen.add(c);
-    if (!firstScan && !self.has(c)) pushHistory({ dir: "receive", amount: n.amount.toString(), assetId: Number(n.assetId) });
+// Reconstruct the wallet's activity purely from the chain (like Zcash/Railgun):
+// group events by transaction, then for each tx decide my role from what it
+// SPENT vs what it CREATED for me.
+//  - I spent an input note in this tx  → it's MY outgoing tx; net out = inputs −
+//    my change → "Sent" (the device that made it overlays the precise
+//    Deposited/Withdrew label + the amount via mergeActivity).
+//  - I own an output but spent nothing → value came IN → "Received".
+//  - net out == 0 (a merge / self-transfer) → not user-facing, skipped.
+// owned = every note I can decrypt (spent or not), so I can match my spent inputs.
+function deriveActivity(groups, owned) {
+  const byCommit = new Map(owned.map((o) => [o.commitment || o.note.commitment().toString(), o]));
+  const byNull = new Map(owned.map((o) => [nullifierHex(o.note.nullifier(o.index)), o]));
+  const acts = [];
+  for (const g of groups) {
+    const myOuts = g.commits.map((c) => byCommit.get(c.commitment)).filter(Boolean).filter((o) => o.amount > 0n);
+    const mySpent = g.nullifiers.map((n) => byNull.get(n)).filter(Boolean);
+    if (!myOuts.length && !mySpent.length) continue;
+    const ts = Date.parse(g.ts) || Date.now();
+    if (mySpent.length) {
+      const net = mySpent.reduce((s, o) => s + o.amount, 0n) - myOuts.reduce((s, o) => s + o.amount, 0n);
+      if (net <= 0n) continue; // merge / self-send — no net movement to show
+      acts.push({ dir: "send", amount: net.toString(), assetId: Number(mySpent[0].assetId), ts, hash: g.hash });
+    } else {
+      for (const o of myOuts) acts.push({ dir: "receive", amount: o.amount.toString(), assetId: Number(o.assetId), ts, hash: g.hash });
+    }
   }
-  localStorage.setItem(seenKey(), JSON.stringify([...seen]));
+  return acts;
+}
+// Merge the chain-derived list with this device's local action log (which knows
+// the precise Deposited / Sent / Withdrew label, by txHash). Local entries not
+// yet on-chain show immediately; once indexed, the chain entry takes over.
+function mergeActivity(derived) {
+  const dHashes = new Set(derived.map((d) => d.hash));
+  const localByHash = new Map(localHist.filter((e) => e.hash).map((e) => [e.hash, e]));
+  const overlaid = derived.map((d) => { const l = localByHash.get(d.hash); return l ? { ...d, dir: l.dir } : d; });
+  const pending = localHist.filter((e) => !e.hash || !dHashes.has(e.hash)); // recent, not indexed yet
+  const out = [], seen = new Set();
+  for (const e of [...overlaid, ...pending]) { const k = e.hash || `${e.dir}-${e.ts}`; if (seen.has(k)) continue; seen.add(k); out.push(e); }
+  return out.sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 60);
 }
 function connect(seed) {
   ME = deriveIdentity(seed);
   localStorage.setItem(SEED_KEY, ME.seed);
-  history = JSON.parse(localStorage.getItem(histKey()) || "[]");
+  localHist = JSON.parse(localStorage.getItem(histKey()) || "[]");
+  history = [...localHist];
   view = "home"; sheet = null; notes = []; revealBalance = false;
   // heartbeat: keep balances converging even if testnet indexing lags the action
   clearInterval(heartbeat);
@@ -119,24 +132,30 @@ function connect(seed) {
   render(); rescan();
 }
 function disconnect() { clearInterval(heartbeat); localStorage.removeItem(SEED_KEY); ME = null; notes = []; view = "landing"; sheet = null; render(); }
-function pushHistory(e) { history.unshift({ ...e, ts: Date.now() }); localStorage.setItem(histKey(), JSON.stringify(history.slice(0, 50))); }
+// Record an action THIS device performed (precise label + tx hash). The rendered
+// history is rebuilt from chain on each scan (mergeActivity overlays these).
+function pushHistory(e) {
+  localHist.unshift({ ...e, ts: Date.now() });
+  localStorage.setItem(histKey(), JSON.stringify(localHist.slice(0, 50)));
+  history = mergeActivity(deriveActivity(lastGroups, lastOwned));
+}
 
 // ---------- chain ----------
 async function rescan() {
   if (!ME) return;
   say("reading the horizon…");
   try {
-    const [events, onchainSpent] = await Promise.all([
-      fetchCommitEvents(CFG.poolId, CFG.startLedger),
-      fetchSpentNullifiers(CFG.poolId, CFG.startLedger),
-    ]);
-    window.__tree = buildTree(events.sort((a, b) => a.index - b.index).map((e) => e.commitment));
+    // one pass: tx-grouped events drive BOTH the balance and the activity history
+    const { groups, commits, spent: onchainSpent } = await fetchTxGroups(CFG.poolId, CFG.startLedger);
+    window.__tree = buildTree(commits.map((e) => e.commitment));
+    const owned = scanOwned(commits, ME.viewSecret, ME.spend); // every note I can decrypt (spent or not)
     const localSpent = new Set(JSON.parse(localStorage.getItem(spentKey()) || "[]"));
-    notes = scanOwned(events, ME.viewSecret, ME.spend).filter((n) => {
+    notes = owned.filter((n) => {
       const h = nullifierHex(n.note.nullifier(n.index));
       return !onchainSpent.has(h) && !localSpent.has(h);
     });
-    recordReceived(); // surface incoming transfers in Activity
+    lastGroups = groups; lastOwned = owned;
+    history = mergeActivity(deriveActivity(groups, owned)); // full history, reconstructed from chain
     say(`${notes.length} note${notes.length === 1 ? "" : "s"} in shadow`);
   } catch (e) { say("could not reach the network — retrying soon"); }
   if (!proving) render();
@@ -174,7 +193,6 @@ const enc = (recipients) => ({ senderViewPub: ME.viewPub, recipients });
 
 async function doShield(amount, assetId) {
   const note = new Note({ amount, assetId, owner: ME.spend });
-  noteSelf([note]);
   const hash = await proveAndSubmit({ tree: window.__tree, inputs: [], outputs: [note], publicAmount: amount, extData: { recipient: CFG.userAddr, extAmount: String(amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: amount, assetId });
   scheduleRescans(); return hash;
 }
@@ -183,7 +201,6 @@ async function doSend(amount, assetId, addr) {
   const rcpt = decodeAddress(addr);
   const toR = new Note({ amount, assetId, owner: rcpt.spendPub });
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
-  noteSelf([change]); // toR belongs to the recipient, the change is ours
   const hash = await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [toR, change], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([rcpt.viewPub, ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
   markSpent(chosen); scheduleRescans(); return hash;
 }
@@ -197,7 +214,6 @@ async function doUnshield(amount, assetId, stellarAddr) {
   if (!st.hasTrust) throw new Error(`Destination has no ${a.symbol} trustline — it can't receive ${a.symbol}. Add the trustline there first.`);
   const { chosen, sum } = selectInputs(amount, assetId);
   const change = new Note({ amount: sum - amount, assetId, owner: ME.spend });
-  noteSelf([change]);
   const hash = await proveAndSubmit({ tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })), outputs: [change], publicAmount: -amount, extData: { recipient: stellarAddr, extAmount: String(-amount), fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: stellarAddr, extAmount: -amount, assetId });
   markSpent(chosen); scheduleRescans(); return hash;
 }
@@ -206,7 +222,6 @@ async function doConsolidate(assetId) {
   if (mine.length < 2) throw new Error("nothing to merge");
   const [n1, n2] = mine;
   const merged = new Note({ amount: n1.amount + n2.amount, assetId, owner: ME.spend });
-  noteSelf([merged]);
   await proveAndSubmit({ tree: window.__tree, inputs: [{ note: n1.note, index: n1.index }, { note: n2.note, index: n2.index }], outputs: [merged], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
   markSpent([n1, n2]); scheduleRescans();
 }
@@ -233,7 +248,6 @@ async function runDeposit(amt, assetId) {
   try {
     await rescan();
     const note = new Note({ amount: amt, assetId, owner: ME.spend });
-    noteSelf([note]);
     const r = buildWitness({
       tree: window.__tree, inputs: [], outputs: [note], publicAmount: amt, assetId,
       extData: { recipient: fr.address, extAmount: String(amt), fee: "0" }, enc: enc([ME.viewPub]),
@@ -600,7 +614,7 @@ function toast(msg) {
 // Drop stale receive entries and reset the scan baseline so it stops recurring;
 // your own deposit/send/withdraw history (and balances) are untouched.
 function migrateActivity() {
-  if (localStorage.getItem("umbra-mig-2")) return;
+  if (localStorage.getItem("umbra-mig-3")) return;
   for (const k of Object.keys(localStorage)) {
     if (k.startsWith("umbra-hist-")) {
       try { localStorage.setItem(k, JSON.stringify(JSON.parse(localStorage.getItem(k) || "[]").filter((e) => e.dir !== "receive"))); } catch {}
@@ -608,7 +622,7 @@ function migrateActivity() {
       localStorage.removeItem(k); // re-baseline on next scan
     }
   }
-  localStorage.setItem("umbra-mig-2", "1");
+  localStorage.setItem("umbra-mig-3", "1");
 }
 
 // ============================ boot ============================
@@ -620,7 +634,7 @@ function migrateActivity() {
   if (CFG.assets?.length) { asset = CFG.assets[0].id; denom = CFG.assets[0].id; }
   fetchPrices(); // non-blocking; re-renders when the ETH/USD price lands
   const saved = localStorage.getItem(SEED_KEY);
-  if (saved && !CFG.error) { try { ME = deriveIdentity(saved); history = JSON.parse(localStorage.getItem(histKey()) || "[]"); view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
+  if (saved && !CFG.error) { try { ME = deriveIdentity(saved); localHist = JSON.parse(localStorage.getItem(histKey()) || "[]"); history = [...localHist]; view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
   if (location.hash === "#docs") view = "docs"; // shareable /#docs deep-link
   // route the docs view off the URL hash. Only #docs opens it and only a CLEARED
   // hash closes it; any other hash (#what, #model, …) is in-page TOC navigation

@@ -54,6 +54,34 @@ async function getAllEvents(server, contractId, startLedger) {
   return out;
 }
 
+// One pass over the pool's events, grouped BY TRANSACTION. Each transact emits
+// 2 commits + 1 nullify (+ audit), so grouping by txHash lets the wallet rebuild
+// a full, chain-derived activity history (who spent what, who received what) the
+// way Zcash/Railgun do — no server, no local bookkeeping required.
+// Returns { groups, commits, spent } so a single fetch drives balance AND history.
+async function fetchTxGroups(contractId, startLedger) {
+  const server = new rpc.Server(RPC_URL);
+  startLedger = await clampStart(server, startLedger);
+  const byTx = new Map();
+  for (const ev of await getAllEvents(server, contractId, startLedger)) {
+    let g = byTx.get(ev.txHash);
+    if (!g) { g = { hash: ev.txHash, ledger: ev.ledger, ts: ev.ledgerClosedAt, commits: [], nullifiers: [] }; byTx.set(ev.txHash, g); }
+    const topics = (ev.topic || []).map(scValToNative);
+    if (topics[0] === "commit") {
+      const [c, enc] = scValToNative(ev.value);
+      g.commits.push({ ledger: ev.ledger, index: Number(topics[1]), commitment: c.toString(), enc: Buffer.from(enc).toString("hex") });
+    } else if (topics[0] === "nullify") {
+      const [a, b] = scValToNative(ev.value);
+      g.nullifiers.push(Buffer.from(a).toString("hex"), Buffer.from(b).toString("hex"));
+    }
+  }
+  const groups = [...byTx.values()].sort((a, b) => a.ledger - b.ledger);
+  const commits = groups.flatMap((g) => g.commits).sort((a, b) => a.index - b.index);
+  const spent = new Set();
+  groups.forEach((g) => g.nullifiers.forEach((n) => spent.add(n)));
+  return { groups, commits, spent };
+}
+
 // Fetch all `commit` events for `contractId` since `startLedger`.
 // Returns [{ ledger, index, commitment(string), enc(hex) }] in tree order.
 async function fetchCommitEvents(contractId, startLedger) {
@@ -87,7 +115,7 @@ function scanOwned(events, viewSecretHex, spendKeypair) {
       if (!pt) continue;
       const note = new Note({ amount: BigInt(pt.amount), assetId: BigInt(pt.assetId ?? 0), owner: spendKeypair, blinding: BigInt(pt.blinding) });
       if (note.commitment().toString() !== ev.commitment) continue; // not really ours
-      owned.push({ note, index: ev.index, amount: BigInt(pt.amount), assetId: BigInt(pt.assetId ?? 0) });
+      owned.push({ note, index: ev.index, amount: BigInt(pt.amount), assetId: BigInt(pt.assetId ?? 0), commitment: ev.commitment });
     } catch { /* skip any malformed event — never abort the whole scan */ }
   }
   return owned;
@@ -149,4 +177,4 @@ function auditEnforced(commitEvents, auditMap, auditorPriv) {
   return decoded;
 }
 
-module.exports = { fetchCommitEvents, fetchAuditEvents, fetchSpentNullifiers, nullifierHex, scanOwned, auditEnforced, RPC_URL };
+module.exports = { fetchTxGroups, fetchCommitEvents, fetchAuditEvents, fetchSpentNullifiers, nullifierHex, scanOwned, auditEnforced, RPC_URL };
