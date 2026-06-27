@@ -92,18 +92,21 @@ function noteSelf(ns) {
 // activity entries (the sender records their send; the recipient only learns of
 // it by scanning the chain — this is what makes it show up for them too).
 function recordReceived() {
-  const seen = new Set(JSON.parse(localStorage.getItem(seenKey()) || "[]"));
+  const raw = localStorage.getItem(seenKey());
+  // First scan on this device = baseline: take everything already owned as known
+  // WITHOUT generating activity, so pre-existing notes (old deposits, change we
+  // can't prove we made here) are never mislabeled "Received". Only notes that
+  // appear AFTER the baseline, and that we didn't create, count as received.
+  const firstScan = raw === null;
+  const seen = new Set(JSON.parse(raw || "[]"));
   const self = new Set(JSON.parse(localStorage.getItem(selfKey()) || "[]"));
-  let added = false;
-  // newest first on-chain (highest index) so the activity reads in time order
   for (const n of [...notes].sort((a, b) => a.index - b.index)) {
     const c = n.note.commitment().toString();
     if (seen.has(c)) continue;
     seen.add(c);
-    if (!self.has(c)) { pushHistory({ dir: "receive", amount: n.amount.toString(), assetId: Number(n.assetId) }); added = true; }
+    if (!firstScan && !self.has(c)) pushHistory({ dir: "receive", amount: n.amount.toString(), assetId: Number(n.assetId) });
   }
   localStorage.setItem(seenKey(), JSON.stringify([...seen]));
-  return added;
 }
 function connect(seed) {
   ME = deriveIdentity(seed);
@@ -593,8 +596,24 @@ function toast(msg) {
   clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("show"), 2600);
 }
 
+// One-time cleanup: an earlier build could mislabel your own notes as "Received".
+// Drop stale receive entries and reset the scan baseline so it stops recurring;
+// your own deposit/send/withdraw history (and balances) are untouched.
+function migrateActivity() {
+  if (localStorage.getItem("umbra-mig-2")) return;
+  for (const k of Object.keys(localStorage)) {
+    if (k.startsWith("umbra-hist-")) {
+      try { localStorage.setItem(k, JSON.stringify(JSON.parse(localStorage.getItem(k) || "[]").filter((e) => e.dir !== "receive"))); } catch {}
+    } else if (k.startsWith("umbra-seen-")) {
+      localStorage.removeItem(k); // re-baseline on next scan
+    }
+  }
+  localStorage.setItem("umbra-mig-2", "1");
+}
+
 // ============================ boot ============================
 (async () => {
+  migrateActivity();
   await initPoseidon();
   await initAuditor();
   try { CFG = await (await fetch(`${API_BASE}/api/config`)).json(); } catch { CFG = { error: "Run the relayer (npm run web:server) and init the pool (npm run web:init)." }; }
