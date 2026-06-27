@@ -28,15 +28,16 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
   const ip = (a) => sh(`stellar contract invoke --id ${poolId} --source shield --network testnet -- ${a}`);
   ip(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
 
-  // Asset 1 = the REAL Circle testnet USDC (so users fund their own Freighter
-  // wallet from faucet.circle.com). Asset 2 = our self-issued EURC (issuer
-  // top-up; controlled by us, so headless tests/demos don't need a human faucet).
+  // Both assets are REAL Circle testnet stablecoins (issuer home_domain circle.com),
+  // so users fund their own Freighter wallet from faucet.circle.com.
   const CIRCLE_USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
   const CIRCLE_USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  const CIRCLE_EURC_SAC = "CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ";
+  const CIRCLE_EURC_ISSUER = "GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO";
   const assets = [
     { id: 1, symbol: "USDC", sac: CIRCLE_USDC_SAC, decimals: 7, code: "USDC", issuer: CIRCLE_USDC_ISSUER, faucet: "circle" },
+    { id: 2, symbol: "EURC", sac: CIRCLE_EURC_SAC, decimals: 7, code: "EURC", issuer: CIRCLE_EURC_ISSUER, faucet: "circle" },
   ];
-  if (e.EURC_SAC) assets.push({ id: 2, symbol: "EURC", sac: e.EURC_SAC, decimals: 7, code: "EURC", issuer: e.USDC_ISSUER, faucet: "issuer" });
   for (const a of assets) ip(`register_asset --asset_id ${a.id} --token ${a.sac}`);
   console.log("registered assets:", assets.map((a) => `${a.id}=${a.symbol}`).join(", "));
 

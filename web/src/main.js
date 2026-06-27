@@ -505,7 +505,7 @@ function sheetView() {
     } else if (!fr) {
       body = `${sel}<button class="btn primary" id="fr-connect">Connect Freighter</button>
         <p class="faucet">No ${esc(a.symbol)} yet? ${a.faucet === "circle"
-          ? `Get testnet USDC at <a href="${esc(CFG.circleFaucet)}" target="_blank">faucet.circle.com</a>`
+          ? `Get testnet ${esc(a.symbol)} at <a href="${esc(CFG.circleFaucet)}" target="_blank">faucet.circle.com</a>`
           : `ask the issuer to send you ${esc(a.symbol)}`} · XLM for fees at <a href="${esc(CFG.friendbot)}?addr=" target="_blank" id="xlm-faucet">friendbot</a>.</p>`;
     } else {
       const st = fr.status || { hasTrust: false, raw: 0n };
