@@ -12,10 +12,10 @@ module.exports = {
     },
     {
       "id": 2,
-      "symbol": "WETH",
-      "sac": "CCMTDKIY27GN5Y5ADJUFE44R5TPFQATQB52LVTQXKVG5TDBG6I7TP3PU",
+      "symbol": "EURC",
+      "sac": "CBNPZ4HUG2S6SRO7KRBHTNLDATIKRK7OY5QOYBRUYJZWRMKTBUSBUA4E",
       "decimals": 7,
-      "code": "WETH",
+      "code": "EURC",
       "issuer": "GDSYUUUBVAALYG2TMZE6RHKLHGXQQBGIDZIXND23S5O54H7WGUGT73NF",
       "faucet": "issuer"
     }

@@ -27,7 +27,7 @@ export const DOC_SECTIONS = [
 
 export function docsView(cfg) {
   const pool = cfg?.poolId ? esc(cfg.poolId) : "—";
-  const assets = (cfg?.assets || []).map((a) => esc(a.symbol)).join(" · ") || "USDC · WETH";
+  const assets = (cfg?.assets || []).map((a) => esc(a.symbol)).join(" · ") || "USDC · EURC";
   const menu = DOC_SECTIONS.map((s) => `<a href="#${s.id}" data-doc="${s.id}">${esc(s.nav)}</a>`).join("");
 
   return `<div class="screen doc">
@@ -235,7 +235,7 @@ export function docsView(cfg) {
       <section id="multi">
         <h2>Multiple assets</h2>
         <p>Notes carry an <code>assetId</code>, and the circuit enforces balance <em>per asset</em>, so a
-          single shielded pool can hold several tokens (e.g. USDC and WETH) without ever mixing their value.
+          single shielded pool can hold several tokens (e.g. USDC and EURC) without ever mixing their value.
           The wallet's home shows your <strong>total portfolio value</strong>, which you can denominate in
           either token via the toggle, with the per-token holdings listed underneath.</p>
       </section>

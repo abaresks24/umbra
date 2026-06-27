@@ -7,7 +7,7 @@ via a view key**. The kind of privacy a regulator can live with: opaque to the
 public, fully legible to an authorized auditor.
 
 Built for *Stellar Hacks: Real-World ZK*. **Testnet only.** Multi-asset (USDC +
-WETH), relayer fees, decimals, note consolidation, and a Create/Connect wallet UI.
+EURC), relayer fees, decimals, note consolidation, and a Create/Connect wallet UI.
 
 > Security posture, trust assumptions, and the trusted-setup ceremony are
 > documented in [`SECURITY.md`](./SECURITY.md).
@@ -183,7 +183,7 @@ circomspect circuits/transfer.circom -L node_modules/circomlib/circuits  # stati
 # 3. A funded testnet identity named `shield`
 stellar keys generate shield --network testnet --fund
 
-# 4. Provision test assets (USDC + a second asset WETH) + trustlines (one-time)
+# 4. Provision test assets (USDC + a second asset EURC) + trustlines (one-time)
 ./scripts/setup_usdc.sh && ./scripts/setup_weth.sh
 
 # 5. The tests
@@ -196,7 +196,7 @@ node test/02_negative.js                   # soundness
 node scripts/lifecycle.js                  # proofs verified on testnet
 node test/04_pool_lifecycle.js             # full pool lifecycle on testnet
 node test/08_enforcement.js                # auditor enforcement REJECTED on-chain
-node test/09_multiasset.js                 # one pool holds USDC + WETH
+node test/09_multiasset.js                 # one pool holds USDC + EURC
 node test/10_onchain_spent.js              # balances derived from on-chain nullifiers
 node test/11_fee_relayer.js                # third-party relayer paid from shielded value
 node test/12_solvency.js                   # pool solvency invariant

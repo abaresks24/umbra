@@ -35,7 +35,7 @@ let asset = 1, proving = false, revealBalance = false, reveals = new Set();
 let discCanvas = null, disc = null, heartbeat = 0;
 let fr = null; // { address, status: {hasTrust, raw} } — connected Freighter account
 let denom = 1;            // the unit the total balance is shown in (an asset id)
-let prices = { ethUsd: 3000 }; // WETH/ETH price in USD (fetched; fallback)
+let prices = { eurUsd: 1.08 }; // EURC/EUR price in USD (fetched; fallback)
 
 // ---------- amount helpers ----------
 const assetById = (id) => (CFG.assets || []).find((a) => Number(a.id) === Number(id));
@@ -55,19 +55,19 @@ function toHuman(raw, d) {
 }
 const balanceOf = (id) => notes.filter((n) => Number(n.assetId) === Number(id)).reduce((a, n) => a + n.amount, 0n);
 const noteCount = (id) => notes.filter((n) => Number(n.assetId) === Number(id)).length;
-// portfolio valuation: USDC = $1, WETH = ETH price. The total can be expressed
+// portfolio valuation: USDC = $1, EURC = EUR/USD rate. The total can be expressed
 // in any asset's unit (the home toggle).
 const humanBal = (id) => Number(toHuman(balanceOf(id), decOf(id)));
-// USD value of one unit of an asset: WETH/ETH = ETH price, stablecoins ≈ $1.
-const assetUsd = (id) => (/ETH/i.test(symOf(id)) ? prices.ethUsd : 1);
+// USD value of one unit of an asset: EURC ≈ EUR/USD, USDC (and other USD) ≈ $1.
+const assetUsd = (id) => (/EUR/i.test(symOf(id)) ? prices.eurUsd : 1);
 const totalUsd = () => (CFG.assets || []).reduce((s, a) => s + humanBal(a.id) * assetUsd(a.id), 0);
 const totalInDenom = () => totalUsd() / assetUsd(denom);
 const fmtNum = (n, dp) => (isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: dp }) : "0");
 async function fetchPrices() {
   try {
-    const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd");
+    const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=euro-coin&vs_currencies=usd");
     const j = await r.json();
-    if (j?.ethereum?.usd) { prices.ethUsd = j.ethereum.usd; if (ME) render(); }
+    if (j?.["euro-coin"]?.usd) { prices.eurUsd = j["euro-coin"].usd; if (ME) render(); }
   } catch { /* keep fallback */ }
 }
 const short = (s, n = 5) => (s && s.length > 2 * n + 1 ? `${s.slice(0, n)}…${s.slice(-n)}` : s || "");
@@ -404,7 +404,7 @@ function wireConnect() {
 function homeView() {
   const assets = CFG.assets || [];
   const total = totalInDenom();
-  const totalStr = assetUsd(denom) > 1 ? fmtNum(total, 6) : fmtNum(total, 2);
+  const totalStr = fmtNum(total, 2); // both USDC and EURC are 2-decimal fiat units
   const holdings = assets.filter((a) => balanceOf(a.id) > 0n);
   return `<div class="screen home">
     <header class="bar">
@@ -632,7 +632,7 @@ function migrateActivity() {
   await initAuditor();
   try { CFG = await (await fetch(`${API_BASE}/api/config`)).json(); } catch { CFG = { error: "Run the relayer (npm run web:server) and init the pool (npm run web:init)." }; }
   if (CFG.assets?.length) { asset = CFG.assets[0].id; denom = CFG.assets[0].id; }
-  fetchPrices(); // non-blocking; re-renders when the ETH/USD price lands
+  fetchPrices(); // non-blocking; re-renders when the EUR/USD rate lands
   const saved = localStorage.getItem(SEED_KEY);
   if (saved && !CFG.error) { try { ME = deriveIdentity(saved); localHist = JSON.parse(localStorage.getItem(histKey()) || "[]"); history = [...localHist]; view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
   if (location.hash === "#docs") view = "docs"; // shareable /#docs deep-link
