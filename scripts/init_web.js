@@ -12,6 +12,12 @@ const ROOT = path.join(__dirname, "..");
 const B = path.join(ROOT, "circuits/build");
 const WASM = path.join(ROOT, "contracts/pool/target/wasm32v1-none/release/shielded_pool.wasm");
 const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// retry a CLI call (a freshly-deployed contract can take a few seconds to be
+// visible to the RPC, which otherwise fails with "Contract not found")
+async function shRetry(c, tries = 6) {
+  for (let i = 0; i < tries; i++) { try { return sh(c); } catch (e) { if (i === tries - 1) throw e; await sleep(5000); } }
+}
 
 (async () => {
   const e = Object.fromEntries(fs.readFileSync(path.join(B, "usdc.env"), "utf8").trim().split("\n").map((l) => l.split("=")));
@@ -22,11 +28,15 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
 
   await initAuditor();
   const auditor = newAuditorKey(); // Baby Jubjub — disclosure ENFORCED in-circuit
+  // SAVE THE KEY FIRST, before any on-chain step can fail. It is a random scalar;
+  // if it is lost, this pool's audit ciphertexts can never be decrypted again.
+  fs.writeFileSync(path.join(B, "auditor.key.json"), JSON.stringify({ priv: auditor.priv, pubX: auditor.pubX, pubY: auditor.pubY }, null, 2));
 
   console.log("deploying pool…");
   const poolId = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
-  const ip = (a) => sh(`stellar contract invoke --id ${poolId} --source shield --network testnet -- ${a}`);
-  ip(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
+  await sleep(8000); // let the new contract instance propagate to the RPC
+  const ip = (a) => shRetry(`stellar contract invoke --id ${poolId} --source shield --network testnet -- ${a}`);
+  await ip(`init --admin ${e.USER_ADDR} --vk_bytes ${vkToHex(VK)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
 
   // Both assets are REAL Circle testnet stablecoins (issuer home_domain circle.com),
   // so users fund their own Freighter wallet from faucet.circle.com.
@@ -38,7 +48,7 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
     { id: 1, symbol: "USDC", sac: CIRCLE_USDC_SAC, decimals: 7, code: "USDC", issuer: CIRCLE_USDC_ISSUER, faucet: "circle" },
     { id: 2, symbol: "EURC", sac: CIRCLE_EURC_SAC, decimals: 7, code: "EURC", issuer: CIRCLE_EURC_ISSUER, faucet: "circle" },
   ];
-  for (const a of assets) ip(`register_asset --asset_id ${a.id} --token ${a.sac}`);
+  for (const a of assets) await ip(`register_asset --asset_id ${a.id} --token ${a.sac}`);
   console.log("registered assets:", assets.map((a) => `${a.id}=${a.symbol}`).join(", "));
 
   // copy browser-served circuit artifacts
@@ -56,9 +66,12 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
     circleFaucet: "https://faucet.circle.com",
   };
   fs.writeFileSync(path.join(B, "web_config.json"), JSON.stringify(config, null, 2));
+  // re-save the key file now that we know the poolId (the priv was already saved above)
+  fs.writeFileSync(path.join(B, "auditor.key.json"), JSON.stringify({ poolId, priv: auditor.priv, pubX: auditor.pubX, pubY: auditor.pubY }, null, 2));
 
   console.log("\n✅ web pool ready:", poolId);
   console.log("config -> circuits/build/web_config.json");
+  console.log("auditor key SAVED -> circuits/build/auditor.key.json");
   console.log("\nAUDITOR private key (paste into the Auditor panel to demo ENFORCED disclosure):");
   console.log("  " + auditor.priv);
 })().catch((e) => { console.error("❌", e.message || e); process.exit(1); });

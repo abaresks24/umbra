@@ -153,6 +153,7 @@ textarea.field { resize: none; line-height: 1.5; }
 .hero-balance { display: flex; flex-direction: column; align-items: center; gap: 2px; background: none; }
 .hero-balance .amt { font-family: var(--font-display); font-weight: 500; font-size: var(--t-display); letter-spacing: -1px; line-height: 0.95; color: var(--ink); }
 .hero-balance .sym { font-family: var(--font-ui); font-weight: 700; font-size: 0.72rem; letter-spacing: 3px; color: var(--ink-faint); text-transform: uppercase; }
+.hero-unit { font-family: var(--font-ui); font-size: var(--t-xs); letter-spacing: 1.5px; text-transform: uppercase; color: var(--ink-faint); margin-top: 2px; }
 .hero-balance.lit .amt { color: var(--ink); }
 .hero-balance.lit { position: relative; }
 .hero-balance.lit::after { content: ""; position: absolute; left: 18%; right: 18%; bottom: 20px; height: 2px; background: var(--accent); opacity: 0.85; }

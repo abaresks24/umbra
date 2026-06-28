@@ -34,7 +34,6 @@ let view = "landing", sheet = null, tmpSeed = "";
 let asset = 1, proving = false, revealBalance = false, reveals = new Set();
 let discCanvas = null, disc = null, heartbeat = 0;
 let fr = null; // { address, status: {hasTrust, raw} } — connected Freighter account
-let denom = 1;            // the unit the total balance is shown in (an asset id)
 let prices = { eurUsd: 1.08 }; // EURC/EUR price in USD (fetched; fallback)
 
 // ---------- amount helpers ----------
@@ -61,7 +60,6 @@ const humanBal = (id) => Number(toHuman(balanceOf(id), decOf(id)));
 // USD value of one unit of an asset: EURC ≈ EUR/USD, USDC (and other USD) ≈ $1.
 const assetUsd = (id) => (/EUR/i.test(symOf(id)) ? prices.eurUsd : 1);
 const totalUsd = () => (CFG.assets || []).reduce((s, a) => s + humanBal(a.id) * assetUsd(a.id), 0);
-const totalInDenom = () => totalUsd() / assetUsd(denom);
 const fmtNum = (n, dp) => (isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: dp }) : "0");
 async function fetchPrices() {
   try {
@@ -403,8 +401,7 @@ function wireConnect() {
 // ---- home ----
 function homeView() {
   const assets = CFG.assets || [];
-  const total = totalInDenom();
-  const totalStr = fmtNum(total, 2); // both USDC and EURC are 2-decimal fiat units
+  const totalStr = fmtNum(totalUsd(), 2); // total portfolio value, in USD
   const holdings = assets.filter((a) => balanceOf(a.id) > 0n);
   return `<div class="screen home">
     <header class="bar">
@@ -418,10 +415,9 @@ function homeView() {
 
     <section class="hero">
       <div class="hero-balance" id="reveal-bal">
-        <span class="amt">${esc(totalStr)}</span>
-        <span class="sym">${esc(symOf(denom))}</span>
+        <span class="amt">$${esc(totalStr)}</span>
       </div>
-      ${assets.length > 1 ? `<div class="asset-tabs">${assets.map((a) => `<button class="asset-tab ${a.id === denom ? "on" : ""}" data-denom="${a.id}">${esc(a.symbol)}</button>`).join("")}</div>` : ""}
+      <p class="hero-unit">total value in USD</p>
     </section>
 
     <nav class="actions">
@@ -476,8 +472,6 @@ function wireHome() {
   $("#copyaddr").onclick = () => { navigator.clipboard?.writeText(ME.address); toast("Address copied"); };
   // balance is always shown — no reveal toggle
   $("#go-audit").onclick = () => { view = "auditor"; render(); };
-  // toggle = the unit the total is shown in (denomination), not an asset filter
-  document.querySelectorAll(".asset-tab").forEach((b) => b.onclick = () => { denom = Number(b.dataset.denom); render(); });
   document.querySelectorAll(".merge-link[data-merge]").forEach((b) => b.onclick = () => runAction("merge", { assetId: Number(b.dataset.merge) }));
   document.querySelectorAll(".act").forEach((b) => b.onclick = async () => { sheet = b.dataset.sheet; render(); if (sheet === "deposit" && fr) { await refreshFr(); render(); } });
   document.querySelectorAll(".row-reveal").forEach((b) => b.onclick = () => { const k = b.dataset.rev; reveals.has(k) ? reveals.delete(k) : reveals.add(k); render(); });
@@ -631,7 +625,7 @@ function migrateActivity() {
   await initPoseidon();
   await initAuditor();
   try { CFG = await (await fetch(`${API_BASE}/api/config`)).json(); } catch { CFG = { error: "Run the relayer (npm run web:server) and init the pool (npm run web:init)." }; }
-  if (CFG.assets?.length) { asset = CFG.assets[0].id; denom = CFG.assets[0].id; }
+  if (CFG.assets?.length) asset = CFG.assets[0].id;
   fetchPrices(); // non-blocking; re-renders when the EUR/USD rate lands
   const saved = localStorage.getItem(SEED_KEY);
   if (saved && !CFG.error) { try { ME = deriveIdentity(saved); localHist = JSON.parse(localStorage.getItem(histKey()) || "[]"); history = [...localHist]; view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
