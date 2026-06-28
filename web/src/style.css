@@ -234,10 +234,16 @@ textarea.field { resize: none; line-height: 1.5; }
 .aud-out .amt { font-family: var(--font-mono); font-size: var(--t-sm); color: var(--ink); flex: 1; font-weight: 600; }
 .aud-out .owner { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--ink-soft); }
 .aud-out .arow { display: flex; align-items: center; gap: 10px; }
-/* auditor filter + export controls */
-.aud-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 2px; }
-.aud-controls .field { width: auto; flex: 1 1 130px; min-width: 110px; padding: 9px 12px; font-size: var(--t-sm); }
-.aud-controls .btn { width: auto; flex: 0 0 auto; padding: 9px 16px; font-size: var(--t-sm); }
+/* auditor toolbar (count + export) and per-column filters inside the table head */
+.aud-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 8px; }
+.aud-toolbar .btn { width: auto; padding: 9px 16px; font-size: var(--t-sm); }
+.aud-table thead tr:first-child th { border-bottom: none; padding-bottom: 4px; }
+.aud-filters th { padding: 2px 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.aud-filters .ff { width: 100%; min-width: 64px; padding: 6px 8px; border-radius: var(--r-sm); background: var(--paper-2); color: var(--ink); font-family: var(--font-ui); font-size: var(--t-xs); box-shadow: inset 0 0 0 1.5px var(--line); }
+.aud-filters .ff.mono { font-family: var(--font-mono); }
+.aud-filters .ff:focus { outline: none; box-shadow: inset 0 0 0 1.5px var(--accent); }
+.aud-filters .mm { display: flex; gap: 4px; }
+.aud-filters .mm .ff { min-width: 50px; }
 /* disclosure table: who paid whom, reconstructed by the auditor */
 .aud-out { overflow-x: auto; }
 .aud-table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }

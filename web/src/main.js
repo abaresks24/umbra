@@ -319,8 +319,8 @@ function auditTable(groups, decoded) {
   return rows.sort((a, b) => (Date.parse(b.ts) || 0) - (Date.parse(a.ts) || 0));
 }
 const auditTime = (ts) => new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-function auditTableHtml(rows) {
-  const tr = (r) => {
+function auditTableRows(rows) {
+  return rows.map((r) => {
     if (r.sealed) return `<tr class="sealed"><td>${esc(auditTime(r.ts))}</td><td class="mono">${r.ledger}</td><td colspan="4" class="muted">sealed — wrong key</td></tr>`;
     const from = r.deposit ? `<span class="aud-tag">deposit</span>` : `<code>${esc(short(r.from, 5))}</code>`;
     return `<tr>
@@ -331,10 +331,7 @@ function auditTableHtml(rows) {
       <td class="num">${esc(toHuman(r.amount, decOf(r.assetId)))}</td>
       <td class="aud-asset">${esc(symOf(r.assetId))}</td>
     </tr>`;
-  };
-  return `<table class="aud-table">
-    <thead><tr><th>Time</th><th>Block</th><th>From</th><th>To</th><th>Amount</th><th>Asset</th></tr></thead>
-    <tbody>${rows.map(tr).join("")}</tbody></table>`;
+  }).join("");
 }
 // Apply the auditor's filters (sender / recipient / asset / since-date) to the
 // reconstructed rows. Read live from the controls so filtering is instant.
@@ -344,22 +341,26 @@ function auditFiltered() {
   const asset = $("#aud-f-asset")?.value || "all";
   const since = $("#aud-f-since")?.value || ""; // yyyy-mm-dd
   const cutoff = since ? Date.parse(since) : 0;
-  const minUsd = parseFloat($("#aud-f-min")?.value || "") || 0;
+  const minUsd = $("#aud-f-min")?.value !== "" ? parseFloat($("#aud-f-min").value) : null;
+  const maxUsd = $("#aud-f-max")?.value !== "" ? parseFloat($("#aud-f-max").value) : null;
   return auditRows.filter((r) => {
     if (r.sealed) return false;
     if (cutoff && (Date.parse(r.ts) || 0) < cutoff) return false;
     if (asset !== "all" && String(r.assetId) !== asset) return false;
-    if (minUsd && Number(toHuman(r.amount, decOf(r.assetId))) * assetUsd(r.assetId) < minUsd) return false;
+    const usd = Number(toHuman(r.amount, decOf(r.assetId))) * assetUsd(r.assetId);
+    if (minUsd != null && usd < minUsd) return false;
+    if (maxUsd != null && usd > maxUsd) return false;
     if (f && !String(r.from || "").includes(f)) return false;
     if (t && !String(r.to || "").includes(t)) return false;
     return true;
   });
 }
 function renderAuditTable() {
-  const out = $("#audit-out"); if (!out) return;
-  if (!auditRows.length) { out.innerHTML = `<p class="empty cool">No transactions to disclose yet.</p>`; return; }
+  const body = $("#audit-body"), count = $("#aud-count"); if (!body) return;
+  if (!auditRows.length) { body.innerHTML = `<tr><td colspan="6" class="muted small" style="padding:18px 10px">No transactions to disclose yet.</td></tr>`; if (count) count.textContent = ""; return; }
   const rows = auditFiltered();
-  out.innerHTML = rows.length ? auditTableHtml(rows) : `<p class="empty cool">No transactions match these filters.</p>`;
+  body.innerHTML = rows.length ? auditTableRows(rows) : `<tr><td colspan="6" class="muted small" style="padding:18px 10px">No transactions match these filters.</td></tr>`;
+  if (count) count.textContent = `${rows.length} of ${auditRows.length} tx`;
 }
 // Export the currently-filtered rows as CSV (opens in Excel). Full owner keys and
 // tx hashes are included so the auditor has the complete record.
@@ -378,13 +379,13 @@ function auditExportCsv() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 async function runAudit(priv) {
-  const out = $("#audit-out");
-  out.innerHTML = `<div class="muted small">reconstructing the ledger…</div>`;
+  const body = $("#audit-body");
+  if (body) body.innerHTML = `<tr><td colspan="6" class="muted small" style="padding:18px 10px">reconstructing the ledger…</td></tr>`;
   try {
     const [{ groups, commits }, auditMap] = await Promise.all([fetchTxGroups(CFG.poolId, CFG.startLedger), fetchAuditEvents(CFG.poolId, CFG.startLedger)]);
     auditRows = auditTable(groups, auditEnforced(commits, auditMap, priv));
     renderAuditTable();
-  } catch (e) { out.innerHTML = `<div class="muted small">${esc(e.message || "could not read events")}</div>`; }
+  } catch (e) { if ($("#audit-body")) $("#audit-body").innerHTML = `<tr><td colspan="6" class="muted small" style="padding:18px 10px">${esc(e.message || "could not read events")}</td></tr>`; }
 }
 
 // ============================ rendering ============================
@@ -665,21 +666,32 @@ const auditorView = () => {
     <h2 class="title sm">Lawful light</h2>
     <p class="lede">With the auditor key, every note is reconstructed: who paid whom, how much, in which asset and when, while the public sees only opaque commitments.</p>
   </div>
-  <div class="aud-controls">
-    <input id="aud-f-from" class="field mono" placeholder="From…" autocomplete="off"/>
-    <input id="aud-f-to" class="field mono" placeholder="To…" autocomplete="off"/>
-    <select id="aud-f-asset" class="field"><option value="all">All assets</option>${assetOpts}</select>
-    <input id="aud-f-min" class="field" type="number" min="0" inputmode="decimal" placeholder="Min $" title="Minimum value in USD"/>
-    <input id="aud-f-since" class="field" type="date" title="Since this date"/>
+  <div class="aud-toolbar">
+    <span class="muted small" id="aud-count"></span>
     <button class="btn gold" id="aud-export">Export CSV</button>
   </div>
-  <div class="aud-out" id="audit-out"><div class="muted small">reconstructing the ledger…</div></div>
+  <div class="aud-out">
+    <table class="aud-table">
+      <thead>
+        <tr><th>Time</th><th>Block</th><th>From</th><th>To</th><th>Amount</th><th>Asset</th></tr>
+        <tr class="aud-filters">
+          <th><input id="aud-f-since" class="ff" type="date" title="Since this date"/></th>
+          <th></th>
+          <th><input id="aud-f-from" class="ff mono" placeholder="filter" autocomplete="off"/></th>
+          <th><input id="aud-f-to" class="ff mono" placeholder="filter" autocomplete="off"/></th>
+          <th><div class="mm"><input id="aud-f-min" class="ff" type="number" min="0" inputmode="decimal" placeholder="min $"/><input id="aud-f-max" class="ff" type="number" min="0" inputmode="decimal" placeholder="max $"/></div></th>
+          <th><select id="aud-f-asset" class="ff"><option value="all">all</option>${assetOpts}</select></th>
+        </tr>
+      </thead>
+      <tbody id="audit-body"><tr><td colspan="6" class="muted small" style="padding:18px 10px">reconstructing the ledger…</td></tr></tbody>
+    </table>
+  </div>
 </div>`;
 };
 function wireAuditor() {
   disc?.idle();
   $("#audit-back").onclick = () => { auditorPriv = null; auditRows = []; view = "landing"; render(); };
-  ["aud-f-from", "aud-f-to", "aud-f-asset", "aud-f-min", "aud-f-since"].forEach((id) => { const el = $("#" + id); if (el) el.oninput = el.onchange = renderAuditTable; });
+  ["aud-f-from", "aud-f-to", "aud-f-asset", "aud-f-min", "aud-f-max", "aud-f-since"].forEach((id) => { const el = $("#" + id); if (el) el.oninput = el.onchange = renderAuditTable; });
   $("#aud-export").onclick = auditExportCsv;
   if (auditorPriv) runAudit(auditorPriv); // auto-disclose with the logged-in key
 }
