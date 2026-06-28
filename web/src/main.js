@@ -319,18 +319,20 @@ function auditTable(groups, decoded) {
   return rows.sort((a, b) => (Date.parse(b.ts) || 0) - (Date.parse(a.ts) || 0));
 }
 const auditTime = (ts) => new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-function auditTableRows(rows) {
+// One card per transaction — readable in the wallet's narrow (phone/extension) layout.
+function auditCards(rows) {
   return rows.map((r) => {
-    if (r.sealed) return `<tr class="sealed"><td>${esc(auditTime(r.ts))}</td><td class="mono">${r.ledger}</td><td colspan="4" class="muted">sealed — wrong key</td></tr>`;
-    const from = r.deposit ? `<span class="aud-tag">deposit</span>` : `<code>${esc(short(r.from, 5))}</code>`;
-    return `<tr>
-      <td class="aud-when">${esc(auditTime(r.ts))}</td>
-      <td class="mono">${r.ledger}</td>
-      <td>${from}</td>
-      <td><code>${esc(short(r.to, 5))}</code></td>
-      <td class="num">${esc(toHuman(r.amount, decOf(r.assetId)))}</td>
-      <td class="aud-asset">${esc(symOf(r.assetId))}</td>
-    </tr>`;
+    if (r.sealed) return `<div class="aud-card sealed"><div class="aud-c-meta">${esc(auditTime(r.ts))} · block ${r.ledger} · sealed (wrong key)</div></div>`;
+    const parties = r.deposit
+      ? `<span class="aud-tag">deposit</span><span class="aud-arrow">→</span><code>${esc(short(r.to, 5))}</code>`
+      : `<code>${esc(short(r.from, 5))}</code><span class="aud-arrow">→</span><code>${esc(short(r.to, 5))}</code>`;
+    return `<div class="aud-card">
+      <div class="aud-c-top">
+        <span class="aud-parties">${parties}</span>
+        <span class="aud-c-amt">${esc(toHuman(r.amount, decOf(r.assetId)))} <span class="u">${esc(symOf(r.assetId))}</span></span>
+      </div>
+      <div class="aud-c-meta">${esc(auditTime(r.ts))} · block ${r.ledger}</div>
+    </div>`;
   }).join("");
 }
 // Apply the auditor's filters (sender / recipient / asset / since-date) to the
@@ -356,10 +358,10 @@ function auditFiltered() {
   });
 }
 function renderAuditTable() {
-  const body = $("#audit-body"), count = $("#aud-count"); if (!body) return;
-  if (!auditRows.length) { body.innerHTML = `<tr><td colspan="6" class="muted small" style="padding:18px 10px">No transactions to disclose yet.</td></tr>`; if (count) count.textContent = ""; return; }
+  const out = $("#aud-cards"), count = $("#aud-count"); if (!out) return;
+  if (!auditRows.length) { out.innerHTML = `<p class="empty cool">No transactions to disclose yet.</p>`; if (count) count.textContent = ""; return; }
   const rows = auditFiltered();
-  body.innerHTML = rows.length ? auditTableRows(rows) : `<tr><td colspan="6" class="muted small" style="padding:18px 10px">No transactions match these filters.</td></tr>`;
+  out.innerHTML = rows.length ? auditCards(rows) : `<p class="empty cool">No transactions match these filters.</p>`;
   if (count) count.textContent = `${rows.length} of ${auditRows.length} tx`;
 }
 // Export the currently-filtered rows as CSV (opens in Excel). Full owner keys and
@@ -379,13 +381,13 @@ function auditExportCsv() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 async function runAudit(priv) {
-  const body = $("#audit-body");
-  if (body) body.innerHTML = `<tr><td colspan="6" class="muted small" style="padding:18px 10px">reconstructing the ledger…</td></tr>`;
+  const out = $("#aud-cards");
+  if (out) out.innerHTML = `<div class="muted small">reconstructing the ledger…</div>`;
   try {
     const [{ groups, commits }, auditMap] = await Promise.all([fetchTxGroups(CFG.poolId, CFG.startLedger), fetchAuditEvents(CFG.poolId, CFG.startLedger)]);
     auditRows = auditTable(groups, auditEnforced(commits, auditMap, priv));
     renderAuditTable();
-  } catch (e) { if ($("#audit-body")) $("#audit-body").innerHTML = `<tr><td colspan="6" class="muted small" style="padding:18px 10px">${esc(e.message || "could not read events")}</td></tr>`; }
+  } catch (e) { if ($("#aud-cards")) $("#aud-cards").innerHTML = `<div class="muted small">${esc(e.message || "could not read events")}</div>`; }
 }
 
 // ============================ rendering ============================
@@ -666,26 +668,19 @@ const auditorView = () => {
     <h2 class="title sm">Lawful light</h2>
     <p class="lede">With the auditor key, every note is reconstructed: who paid whom, how much, in which asset and when, while the public sees only opaque commitments.</p>
   </div>
+  <div class="aud-filterbar">
+    <label class="ff-l">From<input id="aud-f-from" class="ff mono" placeholder="any" autocomplete="off"/></label>
+    <label class="ff-l">To<input id="aud-f-to" class="ff mono" placeholder="any" autocomplete="off"/></label>
+    <label class="ff-l">Min $<input id="aud-f-min" class="ff" type="number" min="0" inputmode="decimal" placeholder="—"/></label>
+    <label class="ff-l">Max $<input id="aud-f-max" class="ff" type="number" min="0" inputmode="decimal" placeholder="—"/></label>
+    <label class="ff-l">Asset<select id="aud-f-asset" class="ff"><option value="all">all</option>${assetOpts}</select></label>
+    <label class="ff-l">Since<input id="aud-f-since" class="ff" type="date"/></label>
+  </div>
   <div class="aud-toolbar">
     <span class="muted small" id="aud-count"></span>
     <button class="btn gold" id="aud-export">Export CSV</button>
   </div>
-  <div class="aud-out">
-    <table class="aud-table">
-      <thead>
-        <tr><th>Time</th><th>Block</th><th>From</th><th>To</th><th>Amount</th><th>Asset</th></tr>
-        <tr class="aud-filters">
-          <th><input id="aud-f-since" class="ff" type="date" title="Since this date"/></th>
-          <th></th>
-          <th><input id="aud-f-from" class="ff mono" placeholder="filter" autocomplete="off"/></th>
-          <th><input id="aud-f-to" class="ff mono" placeholder="filter" autocomplete="off"/></th>
-          <th><div class="mm"><input id="aud-f-min" class="ff" type="number" min="0" inputmode="decimal" placeholder="min $"/><input id="aud-f-max" class="ff" type="number" min="0" inputmode="decimal" placeholder="max $"/></div></th>
-          <th><select id="aud-f-asset" class="ff"><option value="all">all</option>${assetOpts}</select></th>
-        </tr>
-      </thead>
-      <tbody id="audit-body"><tr><td colspan="6" class="muted small" style="padding:18px 10px">reconstructing the ledger…</td></tr></tbody>
-    </table>
-  </div>
+  <div class="aud-cards" id="aud-cards"><div class="muted small">reconstructing the ledger…</div></div>
 </div>`;
 };
 function wireAuditor() {
