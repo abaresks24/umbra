@@ -415,9 +415,9 @@ function homeView() {
 
     <section class="hero">
       <div class="hero-balance" id="reveal-bal">
-        <span class="amt">$${esc(totalStr)}</span>
+        <span class="amt">${esc(totalStr)}</span>
+        <span class="sym">USDC</span>
       </div>
-      <p class="hero-unit">total value in USD</p>
     </section>
 
     <nav class="actions">
