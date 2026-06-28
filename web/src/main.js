@@ -287,16 +287,52 @@ async function runAction(kind, args) {
   render();
 }
 
+// Reconstruct each transaction's flow from the chain, as only the auditor can:
+// decrypt the output notes (enforced ElGamal ciphertexts), group them by tx, and
+// read off who paid whom. By the wallet's output convention the first output of a
+// transfer is the recipient and the second is the sender's change, so output[0].owner
+// is the recipient and output[1].owner is the sender.
+function auditTable(groups, decoded) {
+  const byIdx = new Map(decoded.map((d) => [d.index, d]));
+  const rows = [];
+  for (const g of groups) {
+    const outs = g.commits.map((c) => byIdx.get(c.index)).filter(Boolean).sort((a, b) => a.index - b.index);
+    if (!outs.length) continue;
+    const base = { ts: g.ts, ledger: g.ledger, hash: g.hash };
+    if (outs.some((o) => o.opaque)) { rows.push({ ...base, sealed: true }); continue; }
+    const nz = outs.filter((o) => BigInt(o.amount) > 0n);
+    if (nz.length >= 2) rows.push({ ...base, from: outs[1].owner, to: outs[0].owner, amount: outs[0].amount, assetId: outs[0].assetId });
+    else if (nz.length === 1) rows.push({ ...base, deposit: true, to: nz[0].owner, amount: nz[0].amount, assetId: nz[0].assetId });
+  }
+  return rows.sort((a, b) => (Date.parse(b.ts) || 0) - (Date.parse(a.ts) || 0));
+}
+const auditTime = (ts) => new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+function auditTableHtml(rows) {
+  const tr = (r) => {
+    if (r.sealed) return `<tr class="sealed"><td>${esc(auditTime(r.ts))}</td><td class="mono">${r.ledger}</td><td colspan="4" class="muted">sealed — wrong key</td></tr>`;
+    const from = r.deposit ? `<span class="aud-tag">deposit</span>` : `<code>${esc(short(r.from, 5))}</code>`;
+    return `<tr>
+      <td class="aud-when">${esc(auditTime(r.ts))}</td>
+      <td class="mono">${r.ledger}</td>
+      <td>${from}</td>
+      <td><code>${esc(short(r.to, 5))}</code></td>
+      <td class="num">${esc(toHuman(r.amount, decOf(r.assetId)))}</td>
+      <td class="aud-asset">${esc(symOf(r.assetId))}</td>
+    </tr>`;
+  };
+  return `<table class="aud-table">
+    <thead><tr><th>Time</th><th>Block</th><th>From</th><th>To</th><th>Amount</th><th>Asset</th></tr></thead>
+    <tbody>${rows.map(tr).join("")}</tbody></table>`;
+}
 async function runAudit(priv) {
   const out = $("#audit-out");
   out.innerHTML = `<div class="muted small">reconstructing the ledger…</div>`;
   try {
-    const [events, auditMap] = await Promise.all([fetchCommitEvents(CFG.poolId, CFG.startLedger), fetchAuditEvents(CFG.poolId, CFG.startLedger)]);
-    const rows = auditEnforced(events, auditMap, priv).filter((r) => r.opaque || r.amount > 0n);
-    if (!rows.length) { out.innerHTML = `<div class="muted small">No notes to disclose yet.</div>`; return; }
-    out.innerHTML = rows.map((r) => r.opaque
-      ? `<div class="arow"><span class="leaf">leaf ${r.index}</span><span class="muted">sealed</span><span></span></div>`
-      : `<div class="arow lit"><span class="leaf">leaf ${r.index}</span><span class="amt">${esc(toHuman(r.amount, decOf(r.assetId)))} ${esc(symOf(r.assetId))}</span><span class="owner">${esc(short(r.owner, 6))}</span></div>`).join("");
+    const [{ groups, commits }, auditMap] = await Promise.all([fetchTxGroups(CFG.poolId, CFG.startLedger), fetchAuditEvents(CFG.poolId, CFG.startLedger)]);
+    const decoded = auditEnforced(commits, auditMap, priv);
+    const rows = auditTable(groups, decoded);
+    if (!rows.length) { out.innerHTML = `<p class="empty cool">No transactions to disclose yet.</p>`; return; }
+    out.innerHTML = auditTableHtml(rows);
   } catch (e) { out.innerHTML = `<div class="muted small">${esc(e.message || "could not read events")}</div>`; }
 }
 
@@ -570,7 +606,7 @@ function wireSheet() {
 const auditorView = () => `<div class="screen auditor">
   <header class="bar">
     <button class="icon-btn" id="audit-back" aria-label="back">←</button>
-    <div class="brand"><img class="brand-logo" src="/logo.png" alt="" aria-hidden="true"/>Corona</div>
+    <div class="brand"><img class="brand-logo" src="/logo.png" alt="" aria-hidden="true"/>Umbra</div>
     <span></span>
   </header>
   <div class="aud-intro">
