@@ -22,8 +22,17 @@ function randomScalar() {
 // New auditor keypair (BJJ). priv is a scalar; pub = priv·B8.
 function newAuditorKey() {
   const priv = randomScalar();
-  const pub = bj.mulPointEscalar(bj.Base8, priv);
-  return { priv: priv.toString(), pubX: f2big(pub[0]).toString(), pubY: f2big(pub[1]).toString() };
+  return { priv: priv.toString(), ...auditorPubOf(priv) };
+}
+
+// Derive the auditor PUBLIC key (pub = priv·B8) from a scalar private key. Used
+// to recognise the auditor at login: a pasted key whose pubkey matches the pool's
+// pinned auditor key IS the auditor. Returns null on a non-scalar input.
+function auditorPubOf(priv) {
+  try {
+    const pub = bj.mulPointEscalar(bj.Base8, BigInt(priv));
+    return { pubX: f2big(pub[0]).toString(), pubY: f2big(pub[1]).toString() };
+  } catch { return null; }
 }
 
 // Encrypt msg (array of field BigInts) to the auditor pubkey with ephemeral r.
@@ -69,6 +78,6 @@ function decryptAuditOutput(R, cipher, t, priv) {
 }
 
 module.exports = {
-  initAuditor, newAuditorKey, encryptToAuditor, decryptAsAuditor, randomScalar,
+  initAuditor, newAuditorKey, auditorPubOf, encryptToAuditor, decryptAsAuditor, randomScalar,
   encryptOutputsToAuditor, decryptAuditOutput,
 };

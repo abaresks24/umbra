@@ -8,7 +8,7 @@ import { docsView } from "./docs.js";
 import { initPoseidon, Note } from "../../client/lib/crypto";
 import { buildTree } from "../../client/lib/tree";
 import { buildWitness } from "../../client/lib/transaction";
-import { initAuditor } from "../../client/lib/auditor";
+import { initAuditor, auditorPubOf } from "../../client/lib/auditor";
 import { randomSeed, deriveIdentity, decodeAddress } from "../../client/lib/identity";
 import { fetchTxGroups, fetchCommitEvents, fetchAuditEvents, nullifierHex, scanOwned, auditEnforced } from "../../client/lib/scan";
 import { proofToHex, publicToHex } from "../../scripts/bn254_snark_hex";
@@ -35,6 +35,7 @@ let asset = 1, proving = false, revealBalance = false, reveals = new Set();
 let discCanvas = null, disc = null, heartbeat = 0;
 let fr = null; // { address, status: {hasTrust, raw} } — connected Freighter account
 let prices = { eurUsd: 1.08 }; // EURC/EUR price in USD (fetched; fallback)
+let auditorPriv = null; // set when the auditor logs in with their key
 
 // ---------- amount helpers ----------
 const assetById = (id) => (CFG.assets || []).find((a) => Number(a.id) === Number(id));
@@ -118,8 +119,18 @@ function mergeActivity(derived) {
   for (const e of [...overlaid, ...pending]) { const k = e.hash || `${e.dir}-${e.ts}`; if (seen.has(k)) continue; seen.add(k); out.push(e); }
   return out.sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 60);
 }
+// Is this pasted key the auditor's? (its public key matches the pool's pinned one)
+function isAuditorKey(s) {
+  if (!CFG.auditorPubX || !/^[0-9]+$/.test(s)) return false; // auditor key is a decimal scalar
+  const pub = auditorPubOf(s);
+  return !!pub && pub.pubX === CFG.auditorPubX && pub.pubY === CFG.auditorPubY;
+}
 function connect(seed) {
-  ME = deriveIdentity(seed);
+  const s = String(seed).trim();
+  // The auditor logs in with their key: if it matches the pool's auditor key, open
+  // the disclosure dashboard instead of a wallet (the key IS their credential).
+  if (isAuditorKey(s)) { auditorPriv = s; view = "auditor"; render(); return; }
+  ME = deriveIdentity(s);
   localStorage.setItem(SEED_KEY, ME.seed);
   localHist = JSON.parse(localStorage.getItem(histKey()) || "[]");
   history = [...localHist];
@@ -466,7 +477,7 @@ function homeView() {
     <div class="terminator"></div>
 
     <section class="holdings">
-      <div class="sec-h"><span>Your tokens</span><button class="link sm" id="go-audit">Auditor view</button></div>
+      <div class="sec-h"><span>Your tokens</span></div>
       ${holdings.length ? holdings.map(holdingRow).join("") : `<p class="empty">No tokens in shadow yet. Make a deposit to begin.</p>`}
     </section>
 
@@ -507,7 +518,6 @@ function wireHome() {
   $("#go-docs").onclick = () => openDocs();
   $("#copyaddr").onclick = () => { navigator.clipboard?.writeText(ME.address); toast("Address copied"); };
   // balance is always shown — no reveal toggle
-  $("#go-audit").onclick = () => { view = "auditor"; render(); };
   document.querySelectorAll(".merge-link[data-merge]").forEach((b) => b.onclick = () => runAction("merge", { assetId: Number(b.dataset.merge) }));
   document.querySelectorAll(".act").forEach((b) => b.onclick = async () => { sheet = b.dataset.sheet; render(); if (sheet === "deposit" && fr) { await refreshFr(); render(); } });
   document.querySelectorAll(".row-reveal").forEach((b) => b.onclick = () => { const k = b.dataset.rev; reveals.has(k) ? reveals.delete(k) : reveals.add(k); render(); });
@@ -605,23 +615,20 @@ function wireSheet() {
 // ---- auditor (corona mode — cool, lawful light) ----
 const auditorView = () => `<div class="screen auditor">
   <header class="bar">
-    <button class="icon-btn" id="audit-back" aria-label="back">←</button>
     <div class="brand"><img class="brand-logo" src="/logo.png" alt="" aria-hidden="true"/>Umbra</div>
-    <span></span>
+    <button class="btn ghost sm" id="audit-back">Sign out</button>
   </header>
   <div class="aud-intro">
+    <p class="net">Signed in as auditor</p>
     <h2 class="title sm">Lawful light</h2>
-    <p class="lede">The view key breaks one ring of light through the shadow. With it, an auditor reconstructs every note, amounts and parties included, while the public sees nothing. Disclosure is enforced inside the proof itself.</p>
+    <p class="lede">With the auditor key, every note is reconstructed — who paid whom, how much, in which asset and when — while the public sees only opaque commitments. Disclosure is enforced inside the proof itself.</p>
   </div>
-  <label class="lbl">Auditor private key</label>
-  <textarea id="audit-key" class="field mono" rows="2" placeholder="auditor key"></textarea>
-  <button class="btn gold" id="b-audit">Reveal ledger</button>
-  <div class="aud-out" id="audit-out"><p class="empty cool">The ledger waits in shadow.</p></div>
+  <div class="aud-out" id="audit-out"><div class="muted small">reconstructing the ledger…</div></div>
 </div>`;
 function wireAuditor() {
   disc?.idle();
-  $("#audit-back").onclick = () => { view = "home"; render(); };
-  $("#b-audit").onclick = () => runAudit($("#audit-key").value.trim());
+  $("#audit-back").onclick = () => { auditorPriv = null; view = "landing"; render(); };
+  if (auditorPriv) runAudit(auditorPriv); // auto-disclose with the logged-in key
 }
 
 // ---- proving (the occultation) ----
