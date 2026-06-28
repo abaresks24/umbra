@@ -335,6 +335,21 @@ function auditCards(rows) {
     </div>`;
   }).join("");
 }
+// Table rows for the wide (desktop) layout.
+function auditTableRows(rows) {
+  return rows.map((r) => {
+    if (r.sealed) return `<tr class="sealed"><td>${esc(auditTime(r.ts))}</td><td class="mono">${r.ledger}</td><td colspan="4" class="muted">sealed — wrong key</td></tr>`;
+    const from = r.deposit ? `<span class="aud-tag">deposit</span>` : `<code>${esc(short(r.from, 6))}</code>`;
+    return `<tr>
+      <td class="aud-when">${esc(auditTime(r.ts))}</td>
+      <td class="mono">${r.ledger}</td>
+      <td>${from}</td>
+      <td><code>${esc(short(r.to, 6))}</code></td>
+      <td class="num">${esc(toHuman(r.amount, decOf(r.assetId)))}</td>
+      <td class="aud-asset">${esc(symOf(r.assetId))}</td>
+    </tr>`;
+  }).join("");
+}
 // Apply the auditor's filters (sender / recipient / asset / since-date) to the
 // reconstructed rows. Read live from the controls so filtering is instant.
 function auditFiltered() {
@@ -358,10 +373,13 @@ function auditFiltered() {
   });
 }
 function renderAuditTable() {
-  const out = $("#aud-cards"), count = $("#aud-count"); if (!out) return;
-  if (!auditRows.length) { out.innerHTML = `<p class="empty cool">No transactions to disclose yet.</p>`; if (count) count.textContent = ""; return; }
+  const cards = $("#aud-cards"), body = $("#audit-body"), count = $("#aud-count");
+  if (!cards && !body) return;
+  const setBoth = (cardHtml, rowHtml) => { if (cards) cards.innerHTML = cardHtml; if (body) body.innerHTML = rowHtml; };
+  if (!auditRows.length) { setBoth(`<p class="empty cool">No transactions to disclose yet.</p>`, `<tr><td colspan="6" class="muted small" style="padding:18px">No transactions to disclose yet.</td></tr>`); if (count) count.textContent = ""; return; }
   const rows = auditFiltered();
-  out.innerHTML = rows.length ? auditCards(rows) : `<p class="empty cool">No transactions match these filters.</p>`;
+  if (!rows.length) { setBoth(`<p class="empty cool">No transactions match these filters.</p>`, `<tr><td colspan="6" class="muted small" style="padding:18px">No transactions match these filters.</td></tr>`); }
+  else setBoth(auditCards(rows), auditTableRows(rows));
   if (count) count.textContent = `${rows.length} of ${auditRows.length} tx`;
 }
 // Export the currently-filtered rows as CSV (opens in Excel). Full owner keys and
@@ -381,13 +399,13 @@ function auditExportCsv() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 async function runAudit(priv) {
-  const out = $("#aud-cards");
-  if (out) out.innerHTML = `<div class="muted small">reconstructing the ledger…</div>`;
+  const msg = (m) => { if ($("#aud-cards")) $("#aud-cards").innerHTML = `<div class="muted small">${esc(m)}</div>`; if ($("#audit-body")) $("#audit-body").innerHTML = `<tr><td colspan="6" class="muted small" style="padding:18px">${esc(m)}</td></tr>`; };
+  msg("reconstructing the ledger…");
   try {
     const [{ groups, commits }, auditMap] = await Promise.all([fetchTxGroups(CFG.poolId, CFG.startLedger), fetchAuditEvents(CFG.poolId, CFG.startLedger)]);
     auditRows = auditTable(groups, auditEnforced(commits, auditMap, priv));
     renderAuditTable();
-  } catch (e) { if ($("#aud-cards")) $("#aud-cards").innerHTML = `<div class="muted small">${esc(e.message || "could not read events")}</div>`; }
+  } catch (e) { msg(e.message || "could not read events"); }
 }
 
 // ============================ rendering ============================
@@ -681,6 +699,12 @@ const auditorView = () => {
     <button class="btn gold" id="aud-export">Export CSV</button>
   </div>
   <div class="aud-cards" id="aud-cards"><div class="muted small">reconstructing the ledger…</div></div>
+  <div class="aud-table-wrap">
+    <table class="aud-table">
+      <thead><tr><th>Time</th><th>Block</th><th>From</th><th>To</th><th>Amount</th><th>Asset</th></tr></thead>
+      <tbody id="audit-body"><tr><td colspan="6" class="muted small" style="padding:18px">reconstructing the ledger…</td></tr></tbody>
+    </table>
+  </div>
 </div>`;
 };
 function wireAuditor() {

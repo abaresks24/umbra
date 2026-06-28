@@ -253,6 +253,24 @@ textarea.field { resize: none; line-height: 1.5; }
 .aud-c-amt .u { font-family: var(--font-ui); font-size: var(--t-xs); color: var(--ink-soft); }
 .aud-c-meta { font-size: var(--t-xs); color: var(--ink-faint); margin-top: 6px; }
 .aud-tag { font-size: var(--t-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-faint); }
+/* wide table for desktop; hidden on the narrow (phone/extension) layout */
+.aud-table-wrap { display: none; }
+.aud-table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
+.aud-table th { text-align: left; font-family: var(--font-ui); font-size: var(--t-xs); letter-spacing: 1px; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.aud-table td { padding: 12px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+.aud-table code { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--ink); background: rgba(168, 126, 54, 0.1); padding: 2px 6px; border-radius: 4px; }
+.aud-table td.num { font-family: var(--font-mono); font-weight: 700; color: var(--accent-deep); text-align: right; }
+.aud-table td.aud-asset { font-weight: 700; }
+.aud-table td.aud-when, .aud-table td.mono { color: var(--ink-soft); font-family: var(--font-mono); }
+.aud-table tr.sealed td { color: var(--ink-faint); }
+@media (min-width: 760px) {
+  .screen.auditor { max-width: 1040px; }
+  .aud-intro { max-width: 760px; }
+  .aud-cards { display: none; }
+  .aud-table-wrap { display: block; overflow-x: auto; }
+  .aud-filterbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+  .aud-filterbar .ff-l { flex: 1 1 150px; }
+}
 
 /* ============================ proving ============================ */
 .proving { gap: 26px; }
