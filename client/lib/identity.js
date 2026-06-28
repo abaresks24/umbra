@@ -19,9 +19,12 @@ function randomSeed() {
 }
 
 // seed (hex) -> { seed, spend: Keypair, viewSecret, viewPub, address }
+// A wallet key is exactly 64 hex chars (32 bytes), which is what randomSeed() makes.
+// Requiring the full length stops an arbitrary number (e.g. an auditor key, which
+// is a long decimal, or a short guessable string) from silently becoming a wallet.
 function deriveIdentity(seedHex) {
   const seed = String(seedHex || "").trim().toLowerCase().replace(/^0x/, "");
-  if (!/^[0-9a-f]{8,128}$/.test(seed)) throw new Error("invalid private key");
+  if (!/^[0-9a-f]{64}$/.test(seed)) throw new Error("A wallet key is 64 hexadecimal characters (0-9, a-f). This doesn't look like one.");
   const spendPriv = BigInt("0x" + keccak256("shielded:spend:" + seed)) % P;
   const spend = new Keypair(spendPriv);
   const vsBytes = Buffer.from(keccak256("shielded:view:" + seed), "hex"); // 32 bytes

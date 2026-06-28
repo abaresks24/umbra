@@ -48,8 +48,8 @@ async function scanWallet(id) {
 
 (async () => {
   await initPoseidon(); await initAuditor();
-  const A = deriveIdentity("aaaa".repeat(4) + Math.floor(Date.now() / 1000).toString(16));
-  const B = deriveIdentity("bbbb".repeat(4) + Math.floor(Date.now() / 1000).toString(16));
+  const A = deriveIdentity(("aaaa".repeat(4) + Math.floor(Date.now()/1000).toString(16)).padEnd(64,"0").slice(0,64));
+  const B = deriveIdentity(("bbbb".repeat(4) + Math.floor(Date.now()/1000).toString(16)).padEnd(64,"0").slice(0,64));
   console.log("A:", A.address.slice(0, 18), "| B:", B.address.slice(0, 18));
 
   // fund a Stellar account for A's self-signed deposit
