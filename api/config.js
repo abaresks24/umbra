@@ -3,6 +3,8 @@
 const CONFIG = require("./_config.js");
 module.exports = (req, res) => {
   res.setHeader("content-type", "application/json");
-  res.setHeader("cache-control", "public, max-age=60");
+  // never cache: the pool id / auditor key can change on a re-provision, and a
+  // stale config would point the wallet (and the Auditor view) at the wrong pool.
+  res.setHeader("cache-control", "no-store, max-age=0");
   res.end(JSON.stringify(CONFIG));
 };
