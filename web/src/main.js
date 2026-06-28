@@ -36,6 +36,7 @@ let discCanvas = null, disc = null, heartbeat = 0;
 let fr = null; // { address, status: {hasTrust, raw} } — connected Freighter account
 let prices = { eurUsd: 1.08 }; // EURC/EUR price in USD (fetched; fallback)
 let auditorPriv = null; // set when the auditor logs in with their key
+let auditRows = []; // reconstructed disclosure rows (for live filtering + export)
 
 // ---------- amount helpers ----------
 const assetById = (id) => (CFG.assets || []).find((a) => Number(a.id) === Number(id));
@@ -335,15 +336,52 @@ function auditTableHtml(rows) {
     <thead><tr><th>Time</th><th>Block</th><th>From</th><th>To</th><th>Amount</th><th>Asset</th></tr></thead>
     <tbody>${rows.map(tr).join("")}</tbody></table>`;
 }
+// Apply the auditor's filters (sender / recipient / asset / since-date) to the
+// reconstructed rows. Read live from the controls so filtering is instant.
+function auditFiltered() {
+  const f = ($("#aud-f-from")?.value || "").trim();
+  const t = ($("#aud-f-to")?.value || "").trim();
+  const asset = $("#aud-f-asset")?.value || "all";
+  const since = $("#aud-f-since")?.value || ""; // yyyy-mm-dd
+  const cutoff = since ? Date.parse(since) : 0;
+  return auditRows.filter((r) => {
+    if (r.sealed) return false;
+    if (cutoff && (Date.parse(r.ts) || 0) < cutoff) return false;
+    if (asset !== "all" && String(r.assetId) !== asset) return false;
+    if (f && !String(r.from || "").includes(f)) return false;
+    if (t && !String(r.to || "").includes(t)) return false;
+    return true;
+  });
+}
+function renderAuditTable() {
+  const out = $("#audit-out"); if (!out) return;
+  if (!auditRows.length) { out.innerHTML = `<p class="empty cool">No transactions to disclose yet.</p>`; return; }
+  const rows = auditFiltered();
+  out.innerHTML = rows.length ? auditTableHtml(rows) : `<p class="empty cool">No transactions match these filters.</p>`;
+}
+// Export the currently-filtered rows as CSV (opens in Excel). Full owner keys and
+// tx hashes are included so the auditor has the complete record.
+function auditExportCsv() {
+  const rows = auditFiltered();
+  if (!rows.length) { toast("Nothing to export with these filters"); return; }
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const head = ["Time", "Block", "Type", "From", "To", "Amount", "Asset", "Tx"];
+  const lines = [head.map(q).join(",")];
+  for (const r of rows) lines.push([r.ts, r.ledger, r.deposit ? "deposit" : "transfer", r.deposit ? "" : r.from, r.to, toHuman(r.amount, decOf(r.assetId)), symOf(r.assetId), r.hash].map(q).join(","));
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `umbra-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 async function runAudit(priv) {
   const out = $("#audit-out");
   out.innerHTML = `<div class="muted small">reconstructing the ledger…</div>`;
   try {
     const [{ groups, commits }, auditMap] = await Promise.all([fetchTxGroups(CFG.poolId, CFG.startLedger), fetchAuditEvents(CFG.poolId, CFG.startLedger)]);
-    const decoded = auditEnforced(commits, auditMap, priv);
-    const rows = auditTable(groups, decoded);
-    if (!rows.length) { out.innerHTML = `<p class="empty cool">No transactions to disclose yet.</p>`; return; }
-    out.innerHTML = auditTableHtml(rows);
+    auditRows = auditTable(groups, auditEnforced(commits, auditMap, priv));
+    renderAuditTable();
   } catch (e) { out.innerHTML = `<div class="muted small">${esc(e.message || "could not read events")}</div>`; }
 }
 
@@ -613,21 +651,33 @@ function wireSheet() {
 }
 
 // ---- auditor (corona mode — cool, lawful light) ----
-const auditorView = () => `<div class="screen auditor">
+const auditorView = () => {
+  const assetOpts = (CFG.assets || []).map((a) => `<option value="${a.id}">${esc(a.symbol)}</option>`).join("");
+  return `<div class="screen auditor">
   <header class="bar">
     <div class="brand"><img class="brand-logo" src="/logo.png" alt="" aria-hidden="true"/>Umbra</div>
-    <button class="btn ghost sm" id="audit-back">Sign out</button>
+    <button class="chip" id="audit-back">Sign out</button>
   </header>
   <div class="aud-intro">
     <p class="net">Signed in as auditor</p>
     <h2 class="title sm">Lawful light</h2>
-    <p class="lede">With the auditor key, every note is reconstructed — who paid whom, how much, in which asset and when — while the public sees only opaque commitments. Disclosure is enforced inside the proof itself.</p>
+    <p class="lede">With the auditor key, every note is reconstructed: who paid whom, how much, in which asset and when, while the public sees only opaque commitments.</p>
+  </div>
+  <div class="aud-controls">
+    <input id="aud-f-from" class="field mono" placeholder="From…" autocomplete="off"/>
+    <input id="aud-f-to" class="field mono" placeholder="To…" autocomplete="off"/>
+    <select id="aud-f-asset" class="field"><option value="all">All assets</option>${assetOpts}</select>
+    <input id="aud-f-since" class="field" type="date" title="Since this date"/>
+    <button class="btn gold" id="aud-export">Export CSV</button>
   </div>
   <div class="aud-out" id="audit-out"><div class="muted small">reconstructing the ledger…</div></div>
 </div>`;
+};
 function wireAuditor() {
   disc?.idle();
-  $("#audit-back").onclick = () => { auditorPriv = null; view = "landing"; render(); };
+  $("#audit-back").onclick = () => { auditorPriv = null; auditRows = []; view = "landing"; render(); };
+  ["aud-f-from", "aud-f-to", "aud-f-asset", "aud-f-since"].forEach((id) => { const el = $("#" + id); if (el) el.oninput = el.onchange = renderAuditTable; });
+  $("#aud-export").onclick = auditExportCsv;
   if (auditorPriv) runAudit(auditorPriv); // auto-disclose with the logged-in key
 }
 
