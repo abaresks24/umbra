@@ -344,10 +344,12 @@ function auditFiltered() {
   const asset = $("#aud-f-asset")?.value || "all";
   const since = $("#aud-f-since")?.value || ""; // yyyy-mm-dd
   const cutoff = since ? Date.parse(since) : 0;
+  const minUsd = parseFloat($("#aud-f-min")?.value || "") || 0;
   return auditRows.filter((r) => {
     if (r.sealed) return false;
     if (cutoff && (Date.parse(r.ts) || 0) < cutoff) return false;
     if (asset !== "all" && String(r.assetId) !== asset) return false;
+    if (minUsd && Number(toHuman(r.amount, decOf(r.assetId))) * assetUsd(r.assetId) < minUsd) return false;
     if (f && !String(r.from || "").includes(f)) return false;
     if (t && !String(r.to || "").includes(t)) return false;
     return true;
@@ -667,6 +669,7 @@ const auditorView = () => {
     <input id="aud-f-from" class="field mono" placeholder="From…" autocomplete="off"/>
     <input id="aud-f-to" class="field mono" placeholder="To…" autocomplete="off"/>
     <select id="aud-f-asset" class="field"><option value="all">All assets</option>${assetOpts}</select>
+    <input id="aud-f-min" class="field" type="number" min="0" inputmode="decimal" placeholder="Min $" title="Minimum value in USD"/>
     <input id="aud-f-since" class="field" type="date" title="Since this date"/>
     <button class="btn gold" id="aud-export">Export CSV</button>
   </div>
@@ -676,7 +679,7 @@ const auditorView = () => {
 function wireAuditor() {
   disc?.idle();
   $("#audit-back").onclick = () => { auditorPriv = null; auditRows = []; view = "landing"; render(); };
-  ["aud-f-from", "aud-f-to", "aud-f-asset", "aud-f-since"].forEach((id) => { const el = $("#" + id); if (el) el.oninput = el.onchange = renderAuditTable; });
+  ["aud-f-from", "aud-f-to", "aud-f-asset", "aud-f-min", "aud-f-since"].forEach((id) => { const el = $("#" + id); if (el) el.oninput = el.onchange = renderAuditTable; });
   $("#aud-export").onclick = auditExportCsv;
   if (auditorPriv) runAudit(auditorPriv); // auto-disclose with the logged-in key
 }
