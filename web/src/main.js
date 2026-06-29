@@ -652,7 +652,7 @@ function homeView() {
     <section class="hero">
       <div class="hero-balance" id="reveal-bal">
         <span class="amt">${esc(fmtNum(heroUsd, 2))}</span>
-        <span class="sym">USD</span>
+        <span class="sym">USDC</span>
       </div>
       ${heroCap ? `<p class="hero-cap">${heroCap}</p>` : ""}
     </section>
