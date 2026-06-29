@@ -63,6 +63,8 @@ fn sig_u256(env: &Env, public: &Bytes, i: u32) -> U256 {
 }
 pub fn root(env: &Env, p: &Bytes) -> U256 { sig_u256(env, p, 0) }
 pub fn public_amount(env: &Env, p: &Bytes) -> U256 { sig_u256(env, p, 1) }
+// SWAP circuit only: public signal 1 is the oracle `rate` (EURC price in SWAP_SCALE).
+pub fn swap_rate(env: &Env, p: &Bytes) -> U256 { sig_u256(env, p, 1) }
 pub fn ext_data_hash(env: &Env, p: &Bytes) -> U256 { sig_u256(env, p, 2) }
 // 0 for a private transfer (asset hidden), the assetId at an edge / fee-paying tx.
 pub fn revealed_asset(env: &Env, p: &Bytes) -> U256 { sig_u256(env, p, 3) }

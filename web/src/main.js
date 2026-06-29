@@ -35,6 +35,7 @@ let lastGroups = [], lastOwned = []; // cached chain state for instant activity 
 let view = "landing", sheet = null, tmpSeed = "";
 let tab = "portfolio"; // Rabby-style section: portfolio | swap | earn | borrow
 let swapFrom = 1, swapTo = 2; // swap direction (asset ids)
+let swapOracleRate = null; // pool's on-chain oracle EUR/USD in SWAP_SCALE (1e6), cached
 // on-chain market snapshot (reserves, APYs, the identity's positions + balances)
 let mkt = { stats: {}, pos: {}, health: null, power: 0n, idBal: {}, loadedAt: 0, loading: false, err: null };
 let mktSheet = null; // { fn: "supply"|"withdraw"|"borrow"|"repay", id } while a market action sheet is open
@@ -347,7 +348,15 @@ async function doConsolidate(assetId) {
 // asset of each note stay hidden (only the rate + a tiny rounding fee are public);
 // the auditor ciphertext is enforced. It is internal (no token moves), so it is as
 // private as a transfer and needs no liquidity for the swap itself.
-const swapRate = () => BigInt(Math.round(prices.eurUsd * Number(SWAP_SCALE))); // EURC price in SWAP_SCALE
+// Prefer the pool's on-chain oracle rate (so the proof matches what `swap` checks);
+// fall back to the live EUR/USD price until it's fetched / on an oracle-less pool.
+const swapRate = () => (swapOracleRate ?? BigInt(Math.round(prices.eurUsd * Number(SWAP_SCALE))));
+async function fetchSwapRate() {
+  try {
+    const r = await readViewAs(CFG.poolId, mktSrc(), "oracle_rate", []);
+    if (r && BigInt(r) > 0n) { swapOracleRate = BigInt(r); if (ME && tab === "swap") render(); }
+  } catch { /* pool has no oracle (pre-binding) — keep the local fallback */ }
+}
 const priceOfId = (id, rate) => (Number(id) === 2 ? rate : SWAP_SCALE); // USD price of one unit
 function swapQuote(fromId, toId, amtIn, rate) {
   const valueIn = amtIn * priceOfId(fromId, rate);
@@ -944,15 +953,25 @@ function refreshSwapQuote() {
   } catch { outEl.value = ""; }
 }
 function wireSwap() {
+  fetchSwapRate(); // keep the quote bound to the on-chain oracle
   const flip = () => { [swapFrom, swapTo] = [swapTo, swapFrom]; render(); };
   const fp = $("#swap-flip"); if (fp) fp.onclick = flip;
   const fpp = $("#swap-from-pill"); if (fpp) fpp.onclick = flip;
   const tpp = $("#swap-to-pill"); if (tpp) tpp.onclick = flip;
   const inEl = $("#swap-amt"); if (inEl) inEl.oninput = refreshSwapQuote;
-  const go = $("#swap-go"); if (go) go.onclick = () => {
+  const go = $("#swap-go"); if (go) go.onclick = async () => {
     let amt; try { amt = toRawAs($("#swap-amt").value || "0", swapFrom); } catch (e) { return toast(e.message); }
     if (amt <= 0n) return toast("Enter an amount");
     if (amt > balanceOf(swapFrom)) return toast(`Only ${toHuman(balanceOf(swapFrom), decOf(swapFrom))} ${symOf(swapFrom)} in shadow`);
+    // liquidity gate: you can only get out what the pool can later pay out. The
+    // pool's output-asset reserve is public (its token balance), so warn/block here
+    // (on-chain the reserve can't be checked at swap time — amounts are hidden).
+    const { out } = swapQuote(swapFrom, swapTo, amt, swapRate());
+    const a = assetById(swapTo);
+    try {
+      const st = await assetStatus(CFG.poolId, a.code, a.issuer, a.decimals);
+      if (BigInt(st.raw || 0n) < out) return toast(`Pool holds only ${toHuman(BigInt(st.raw || 0n), decOf(swapTo))} ${symOf(swapTo)} — not enough to back this swap`);
+    } catch { /* if the reserve can't be read, fall through (withdrawal stays the backstop) */ }
     runSwap(swapFrom, swapTo, amt);
   };
 }

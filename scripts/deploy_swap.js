@@ -32,6 +32,7 @@ const ISSUER = "GDSYUUUBVAALYG2TMZE6RHKLHGXQQBGIDZIXND23S5O54H7WGUGT73NF";
   await ip(`init --admin ${USER} --vk_bytes ${vkToHex(transferVk)} --auditor_x ${auditor.pubX} --auditor_y ${auditor.pubY}`);
   await ip(`register_asset --asset_id 1 --token ${TEST_TOKEN_SAC}`);
   await ip(`set_swap_vk --vk_bytes ${vkToHex(swapVk)}`);
+  await ip(`set_oracle --oracle CCSSOHTBL3LEWUCBBEB5NJFC2OKFRC74OWEIJIZLRJBGAAU4VMU5NV4W --div 100000000`); // Reflector forex
 
   const config = {
     poolId: pool, relayer: "shield",

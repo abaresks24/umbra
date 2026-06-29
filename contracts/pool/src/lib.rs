@@ -10,9 +10,31 @@ mod merkle;
 mod verifier;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Bytes, BytesN, Env, U256,
+    contract, contractclient, contractimpl, contracttype, symbol_short, token, Address, Bytes,
+    BytesN, Env, Symbol, U256,
 };
 use soroban_sdk::crypto::bn254::Bn254Fr;
+
+// The shielded swap's public `rate` (EURC price, SWAP_SCALE = 1e6) is bound to the
+// Reflector SEP-40 forex oracle: the contract reads EUR/USD on-chain and rejects any
+// swap whose rate strays from it, so a prover can't pick a favourable price.
+const RATE_TOL_BPS: i128 = 200; // 2% — slack for price drift between quote and execution
+#[contracttype]
+#[derive(Clone)]
+pub enum OracleAsset {
+    Stellar(Address),
+    Other(Symbol),
+}
+#[contracttype]
+#[derive(Clone)]
+pub struct PriceData {
+    pub price: i128,
+    pub timestamp: u64,
+}
+#[contractclient(name = "OracleClient")]
+pub trait OracleInterface {
+    fn lastprice(env: Env, asset: OracleAsset) -> Option<PriceData>;
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -24,6 +46,24 @@ pub enum Key {
     Asset(U256),         // assetId -> token (SAC) address
     Nullifier(BytesN<32>),
     SwapVk,              // VK for the shielded-swap circuit
+    Oracle,              // Reflector forex feed (SEP-40) address
+    OracleDiv,           // divisor: oracle decimals -> SWAP_SCALE (14 -> 6 == 1e8)
+}
+
+// Live EUR/USD from Reflector, scaled to SWAP_SCALE (1e6). None if unconfigured /
+// no data, in which case the swap rate check is skipped (set the oracle to enforce).
+fn oracle_swap_rate(env: &Env) -> Option<i128> {
+    let s = env.storage().instance();
+    let oracle: Address = s.get(&Key::Oracle)?;
+    let div: i128 = s.get(&Key::OracleDiv).unwrap_or(100_000_000);
+    let pd = match OracleClient::new(env, &oracle)
+        .try_lastprice(&OracleAsset::Other(Symbol::new(env, "EUR")))
+    {
+        Ok(Ok(Some(pd))) => pd,
+        _ => return None,
+    };
+    let r = pd.price / div;
+    if r > 0 { Some(r) } else { None }
 }
 
 fn u256_from_u128(env: &Env, v: u128) -> U256 {
@@ -81,6 +121,22 @@ impl ShieldedPool {
         s.set(&Key::SwapVk, &vk_bytes);
     }
 
+    /// Wire the Reflector forex oracle for swap-rate binding. `div` normalises the
+    /// oracle's decimals to SWAP_SCALE (Reflector forex is 14 dec -> div = 1e8).
+    pub fn set_oracle(env: Env, oracle: Address, div: i128) {
+        let s = env.storage().instance();
+        let admin: Address = s.get(&Key::Admin).expect("not initialised");
+        admin.require_auth();
+        assert!(div > 0, "bad divisor");
+        s.set(&Key::Oracle, &oracle);
+        s.set(&Key::OracleDiv, &div);
+    }
+    /// Current oracle EUR/USD in SWAP_SCALE (1e6); 0 if no oracle / no data. Clients
+    /// quote against this so their proof's rate matches what `swap` will check.
+    pub fn oracle_rate(env: Env) -> i128 {
+        oracle_swap_rate(&env).unwrap_or(0)
+    }
+
     /// Shielded SWAP: convert value between assets (e.g. USDC -> EURC) at the
     /// proof's oracle rate, all amounts hidden. A swap is INTERNAL: no token
     /// crosses the pool boundary (reserves stay; liquidity is pre-funded), so it
@@ -100,6 +156,15 @@ impl ShieldedPool {
         let ay: U256 = s.get(&Key::AuditorY).unwrap();
         assert!(verifier::auditor_pub(&env, &public, 0) == ax, "wrong auditor key");
         assert!(verifier::auditor_pub(&env, &public, 1) == ay, "wrong auditor key");
+
+        // Bind the proof's `rate` to the on-chain Reflector oracle (if configured):
+        // the swapper cannot pick a favourable price.
+        if let Some(orate) = oracle_swap_rate(&env) {
+            let pr = verifier::swap_rate(&env, &public).to_u128().expect("rate out of range") as i128;
+            let tol = orate * RATE_TOL_BPS / 10_000;
+            let diff = if pr > orate { pr - orate } else { orate - pr };
+            assert!(diff <= tol, "swap rate deviates from oracle");
+        }
 
         let nf0 = verifier::nullifier(&env, &public, 0);
         let nf1 = verifier::nullifier(&env, &public, 1);
