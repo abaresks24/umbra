@@ -14,7 +14,7 @@ import { fetchTxGroups, fetchCommitEvents, fetchAuditEvents, nullifierHex, scanO
 import { proofToHex, publicToHex } from "../../scripts/bn254_snark_hex";
 import { submitTransact } from "../../client/lib/soroban";
 import { connectFreighter, assetStatus, addTrustline, freighterSign, freighterInstalled } from "../../client/lib/wallet-connect";
-import { readViewAs, invokeMarket, A as mA, U as mU, I as mI } from "../../client/lib/market";
+import { readViewAs, deriveMarketKey, bootstrapIdentity, submitViaRelayer, A as mA, U as mU, I as mI } from "../../client/lib/market";
 
 const WASM_URL = "/transfer.wasm", ZKEY_URL = "/transfer_final.zkey";
 const SWAP_WASM_URL = "/swap.wasm", SWAP_ZKEY_URL = "/swap_final.zkey";
@@ -35,10 +35,14 @@ let lastGroups = [], lastOwned = []; // cached chain state for instant activity 
 let view = "landing", sheet = null, tmpSeed = "";
 let tab = "portfolio"; // Rabby-style section: portfolio | swap | earn | borrow
 let swapFrom = 1, swapTo = 2; // swap direction (asset ids)
-// on-chain market snapshot (reserves, APYs, the connected account's positions)
-let mkt = { stats: {}, pos: {}, health: null, power: 0n, frBal: {}, loadedAt: 0, loading: false, err: null };
+// on-chain market snapshot (reserves, APYs, the identity's positions + balances)
+let mkt = { stats: {}, pos: {}, health: null, power: 0n, idBal: {}, loadedAt: 0, loading: false, err: null };
 let mktSheet = null; // { fn: "supply"|"withdraw"|"borrow"|"repay", id } while a market action sheet is open
 let mktBusy = false;
+// DeFi identity: a Stellar keypair derived from the wallet seed (a fresh pseudonym,
+// NOT Freighter). It signs market ops; the relayer pays the gas (fee-bump). Funded
+// privately by withdrawing shielded USDC to its address.
+let mid = null; // { kp, address, active } once derived/activated
 let asset = 1, proving = false, revealBalance = false, reveals = new Set();
 let discCanvas = null, disc = null, heartbeat = 0;
 let fr = null; // { address, status: {hasTrust, raw} } — connected Freighter account
@@ -97,19 +101,22 @@ const marketAssets = () => CFG.marketAssets || [];
 const mAssetById = (id) => marketAssets().find((a) => Number(a.id) === Number(id));
 const mSym = (id) => mAssetById(id)?.symbol || `#${id}`;
 const mDec = (id) => mAssetById(id)?.decimals ?? 7;
-const mktSrc = () => (fr?.address || CFG.userAddr); // any funded account for view simulation
+const mktSrc = () => (mid?.address || CFG.userAddr); // any funded account for view simulation
 const pct = (bps) => (Number(bps) / 100).toFixed(2); // basis points -> percent string
 const mPriceUsd = (id) => Number(mkt.stats[id]?.price || (id === 2 ? 11400000n : 10000000n)) / 1e7;
-const mFrBal = (id) => mkt.frBal[id] ?? 0n; // connected account's on-chain token balance
+const mIdBal = (id) => mkt.idBal[id] ?? 0n; // the DeFi identity's on-chain token balance
+// derive the wallet's DeFi identity (a fresh Stellar pseudonym, not Freighter)
+function initMid() { try { const kp = deriveMarketKey(ME.seed); mid = { kp, address: kp.publicKey(), active: false }; } catch { mid = null; } }
 
-// Read the whole market state from chain: per-asset reserves/APY + (if connected)
-// the account's positions, health and free wallet balances. Then re-render.
+// Read the whole market state from chain: per-asset reserves/APY + the DeFi
+// identity's positions, health, balances and activation status. Then re-render.
 async function marketRefresh() {
   if (!CFG.market) return;
   mkt.loading = true; mkt.err = null;
   try {
     const src = mktSrc();
     const stats = {}, pos = {};
+    let anyTrust = false, acctExists = true;
     for (const a of marketAssets()) {
       const id = a.id;
       const [reserve, sup, bor, sApy, bApy, util, price] = await Promise.all([
@@ -122,14 +129,22 @@ async function marketRefresh() {
         readViewAs(CFG.market, src, "price", [mU(id)]),
       ]);
       stats[id] = { reserve, sup, bor, sApy, bApy, util, price };
-      if (fr) {
-        const p = await readViewAs(CFG.market, src, "position", [mA(fr.address), mU(id)]);
+      if (mid) {
+        const p = await readViewAs(CFG.market, src, "position", [mA(mid.address), mU(id)]);
         pos[id] = { supplied: BigInt(p.supplied), borrowed: BigInt(p.borrowed) };
-        try { const st = await assetStatus(fr.address, a.code, a.issuer, a.decimals); mkt.frBal[id] = st.hasTrust ? st.raw : 0n; mkt.frBal[`trust${id}`] = st.hasTrust; }
-        catch { mkt.frBal[id] = 0n; }
+        try {
+          const st = await assetStatus(mid.address, a.code, a.issuer, a.decimals);
+          acctExists = acctExists && st.exists;
+          mkt.idBal[id] = st.hasTrust ? st.raw : 0n; mkt.idBal[`trust${id}`] = st.hasTrust;
+          if (st.hasTrust) anyTrust = true;
+        } catch { mkt.idBal[id] = 0n; }
       }
     }
-    if (fr) { mkt.health = await readViewAs(CFG.market, src, "health", [mA(fr.address)]); }
+    if (mid) {
+      mkt.health = await readViewAs(CFG.market, src, "health", [mA(mid.address)]);
+      // "active" = the identity account exists and trusts the market assets
+      mid.active = acctExists && marketAssets().every((a) => mkt.idBal[`trust${a.id}`]);
+    }
     mkt.stats = stats; mkt.pos = pos; mkt.loadedAt = Date.now();
   } catch (e) { mkt.err = e.message || String(e); }
   mkt.loading = false;
@@ -225,7 +240,7 @@ function connect(seed) {
   localHist = JSON.parse(localStorage.getItem(histKey()) || "[]");
   history = [...localHist];
   view = "home"; sheet = null; tab = "portfolio"; notes = []; revealBalance = false;
-  marketRefresh();
+  initMid(); marketRefresh();
   // heartbeat: keep balances converging even if testnet indexing lags the action
   clearInterval(heartbeat);
   heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000);
@@ -335,16 +350,29 @@ async function doConsolidate(assetId) {
 // then refreshes the on-chain snapshot.
 async function runMarket(label, fn, args, onDone) {
   if (mktBusy) return;
-  if (!fr) { toast("Connect Freighter first"); return; }
+  if (!mid?.active) { toast("Activate your DeFi identity first"); return; }
   mktBusy = true; proving = true; render();
   try {
-    const hash = await invokeMarket({ marketId: CFG.market, caller: fr.address, fn, args, signXdr: freighterSign, rpcUrl: CFG.rpc });
+    const hash = await submitViaRelayer({ marketId: CFG.market, kp: mid.kp, fn, args, apiBase: API_BASE, rpcUrl: CFG.rpc });
     toast(label);
     if (onDone) onDone(hash);
   } catch (e) { proving = false; mktBusy = false; toast(humanizeErr(e.message || String(e))); render(); return; }
   proving = false; mktBusy = false;
   sheet = null; mktSheet = null; render();
   marketRefresh();
+}
+// Activate the DeFi identity: friendbot-fund it + add trustlines (relayer-paid),
+// so the wallet's pseudonym can hold and move USDC/EURC without Freighter or gas.
+async function activateIdentity() {
+  if (!mid) return;
+  if (mktBusy) return;
+  mktBusy = true; proving = true; render();
+  try {
+    await bootstrapIdentity({ kp: mid.kp, assets: marketAssets(), apiBase: API_BASE, rpcUrl: CFG.rpc, friendbot: CFG.friendbot });
+    toast("DeFi identity activated");
+  } catch (e) { proving = false; mktBusy = false; toast(humanizeErr(e.message || String(e))); render(); return; }
+  proving = false; mktBusy = false; render();
+  await marketRefresh();
 }
 // turn a raw contract panic into a readable reason
 function humanizeErr(m) {
@@ -355,11 +383,11 @@ function humanizeErr(m) {
   return m.length > 120 ? m.slice(0, 120) + "…" : m;
 }
 const runSwapMarket = (fromId, amtIn, minOut) => runMarket(
-  `Swapped ${mSym(fromId)} → ${mSym(fromId === 1 ? 2 : 1)}`, "swap", [mA(fr.address), mU(fromId), mI(amtIn), mI(minOut)]);
-const runSupply = (id, amt) => runMarket(`Supplied ${toHuman(amt, mDec(id))} ${mSym(id)}`, "supply", [mA(fr.address), mU(id), mI(amt)]);
-const runWithdrawMkt = (id, amt) => runMarket(`Withdrew ${toHuman(amt, mDec(id))} ${mSym(id)}`, "withdraw", [mA(fr.address), mU(id), mI(amt)]);
-const runBorrow = (id, amt) => runMarket(`Borrowed ${toHuman(amt, mDec(id))} ${mSym(id)}`, "borrow", [mA(fr.address), mU(id), mI(amt)]);
-const runRepay = (id, amt) => runMarket(`Repaid ${toHuman(amt, mDec(id))} ${mSym(id)}`, "repay", [mA(fr.address), mU(id), mI(amt)]);
+  `Swapped ${mSym(fromId)} → ${mSym(fromId === 1 ? 2 : 1)}`, "swap", [mA(mid.address), mU(fromId), mI(amtIn), mI(minOut)]);
+const runSupply = (id, amt) => runMarket(`Supplied ${toHuman(amt, mDec(id))} ${mSym(id)}`, "supply", [mA(mid.address), mU(id), mI(amt)]);
+const runWithdrawMkt = (id, amt) => runMarket(`Withdrew ${toHuman(amt, mDec(id))} ${mSym(id)}`, "withdraw", [mA(mid.address), mU(id), mI(amt)]);
+const runBorrow = (id, amt) => runMarket(`Borrowed ${toHuman(amt, mDec(id))} ${mSym(id)}`, "borrow", [mA(mid.address), mU(id), mI(amt)]);
+const runRepay = (id, amt) => runMarket(`Repaid ${toHuman(amt, mDec(id))} ${mSym(id)}`, "repay", [mA(mid.address), mU(id), mI(amt)]);
 
 // ---------- Freighter (self-custodial deposits) ----------
 async function refreshFr() {
@@ -688,13 +716,23 @@ function portfolioPanel() {
   </div>`;
 }
 
-// A banner asking the user to connect Freighter (the market is signed by their
-// public account; private capital reaches it via a shielded withdrawal).
-function frBanner(action) {
-  if (fr) return "";
+// The DeFi identity banner. The market is NOT signed by Freighter — it's signed by
+// a fresh pseudonym derived from your wallet, with gas paid by the relayer. Until
+// it's activated (account + trustlines), show the activate button; once active,
+// show the address to fund privately (withdraw shielded USDC to it).
+function identityBanner() {
+  if (!mid) return "";
+  if (!mid.active) {
+    return `<div class="mkt-connect">
+      <p class="panel-note" style="margin:0">Your DeFi activity uses a private identity derived from your wallet — never your Freighter account, and you pay no gas (the relayer sponsors it). Activate it once to begin.</p>
+      <button class="btn primary wide" id="mkt-activate">Activate DeFi identity</button>
+    </div>`;
+  }
+  const funded = marketAssets().some((a) => mIdBal(a.id) > 0n);
   return `<div class="mkt-connect">
-    <p class="panel-note" style="margin:0">The market settles on your public Stellar account. Connect Freighter to ${action}. Fund it privately by withdrawing from your shielded balance.</p>
-    <button class="btn primary wide" id="mkt-fr-connect">Connect Freighter</button>
+    <div class="fr-row"><span class="muted small">DeFi identity</span><span class="mono small">${esc(short(mid.address, 5))} <button class="link sm" id="mkt-copy-id">copy</button></span></div>
+    ${marketAssets().map((a) => `<div class="fr-row"><span class="muted small">${esc(a.symbol)} balance</span><span class="mono small">${esc(toHuman(mIdBal(a.id), mDec(a.id)))}</span></div>`).join("")}
+    <button class="btn ${funded ? "ghost" : "primary"} wide" id="mkt-fund">Fund from shadow (private)</button>
   </div>`;
 }
 function mktErrBar() { return mkt.err ? `<p class="panel-note" style="color:var(--danger)">Market read failed: ${esc(humanizeErr(mkt.err))}</p>` : ""; }
@@ -704,9 +742,9 @@ function swapPanel() {
   const s = mkt.stats[swapTo];
   const reserveOut = s ? toHuman(s.reserve, mDec(swapTo)) : "…";
   const ratio = (mPriceUsd(swapFrom) / mPriceUsd(swapTo));
-  const frFrom = fr ? toHuman(mFrBal(swapFrom), mDec(swapFrom)) : "—";
+  const frFrom = mid?.active ? toHuman(mIdBal(swapFrom), mDec(swapFrom)) : "—";
   return `<div class="panel swap-panel">
-    ${frBanner("swap")}${mktErrBar()}
+    ${identityBanner()}${mktErrBar()}
     <div class="swap-card">
       <div class="swap-leg">
         <div class="swap-leg-top"><span class="lbl">You pay</span><span class="bal-mini">${esc(frFrom)} ${esc(mSym(swapFrom))}</span></div>
@@ -726,7 +764,7 @@ function swapPanel() {
     </div>
     <div class="swap-quote"><span>Rate · Reflector oracle</span><span class="mono">1 ${esc(mSym(swapFrom))} = ${esc(ratio.toFixed(4))} ${esc(mSym(swapTo))}</span></div>
     <div class="swap-quote"><span>Fee → liquidity providers</span><span class="mono">0.30%</span></div>
-    ${fr ? `<button class="btn primary wide" id="swap-go">Swap</button>` : ""}
+    ${mid?.active ? `<button class="btn primary wide" id="swap-go">Swap</button>` : ""}
     <p class="panel-note">A real reserve-checked swap: the contract pays the output from suppliers' liquidity and reverts if the pool can't cover it. EUR/USD is read live on-chain from the Reflector oracle. The 0.30% fee accrues to the input asset's suppliers, so LP yield grows with volume.</p>
   </div>`;
 }
@@ -747,13 +785,13 @@ function earnPanel() {
       </div>
       <span class="lp-apy">${esc(apy)}%<small>SUPPLY APY</small></span>
       <div class="lp-btns">
-        ${fr ? `<button class="lp-b" data-msupply="${a.id}">Supply</button>` : ""}
-        ${fr && mine > 0n ? `<button class="lp-b ghost" data-mwithdraw="${a.id}">Withdraw</button>` : ""}
+        ${mid?.active ? `<button class="lp-b" data-msupply="${a.id}">Supply</button>` : ""}
+        ${mid?.active && mine > 0n ? `<button class="lp-b ghost" data-mwithdraw="${a.id}">Withdraw</button>` : ""}
       </div>
     </div>`;
   }).join("");
   return `<div class="panel earn-panel">
-    ${frBanner("supply liquidity")}${mktErrBar()}
+    ${identityBanner()}${mktErrBar()}
     <section class="holdings">
       <div class="sec-h"><span>Liquidity pools</span></div>
       ${rows || `<p class="empty">Loading market…</p>`}
@@ -779,13 +817,13 @@ function borrowPanel() {
       </div>
       <span class="lp-apy">${esc(bApy)}%<small>BORROW APY</small></span>
       <div class="lp-btns">
-        ${fr ? `<button class="lp-b" data-mborrow="${a.id}">Borrow</button>` : ""}
-        ${fr && debt > 0n ? `<button class="lp-b ghost" data-mrepay="${a.id}">Repay</button>` : ""}
+        ${mid?.active ? `<button class="lp-b" data-mborrow="${a.id}">Borrow</button>` : ""}
+        ${mid?.active && debt > 0n ? `<button class="lp-b ghost" data-mrepay="${a.id}">Repay</button>` : ""}
       </div>
     </div>`;
   }).join("");
   return `<div class="panel borrow-panel">
-    ${frBanner("borrow")}${mktErrBar()}
+    ${identityBanner()}${mktErrBar()}
     <div class="borrow-stat-row">
       <div class="borrow-stat"><span class="bs-k">Collateral</span><span class="bs-v mono">${esc(fmtNum(collUsd, 2))} USD</span></div>
       <div class="borrow-stat"><span class="bs-k">Debt</span><span class="bs-v mono">${esc(fmtNum(debtUsd, 2))} USD</span></div>
@@ -835,13 +873,20 @@ function wireHome() {
   document.querySelectorAll(".merge-link[data-merge]").forEach((b) => b.onclick = () => runAction("merge", { assetId: Number(b.dataset.merge) }));
   document.querySelectorAll(".act").forEach((b) => b.onclick = async () => { sheet = b.dataset.sheet; render(); if (sheet === "deposit" && fr) { await refreshFr(); render(); } });
   document.querySelectorAll(".row-reveal").forEach((b) => b.onclick = () => { const k = b.dataset.rev; reveals.has(k) ? reveals.delete(k) : reveals.add(k); render(); });
-  const fc = $("#mkt-fr-connect"); if (fc) fc.onclick = () => connectMarketFreighter();
+  const act = $("#mkt-activate"); if (act) act.onclick = () => activateIdentity();
+  const cid = $("#mkt-copy-id"); if (cid) cid.onclick = () => { navigator.clipboard?.writeText(mid.address); toast("DeFi address copied"); };
+  const fund = $("#mkt-fund"); if (fund) fund.onclick = () => fundIdentity();
   if (tab === "swap") wireSwap();
   if (tab === "earn") wireEarn();
   if (tab === "borrow") wireBorrow();
 }
-async function connectMarketFreighter() {
-  try { await doConnectFreighter(); await marketRefresh(); } catch (e) { toast(e.message || "connect failed"); }
+// Fund the DeFi identity privately: withdraw shielded USDC to its address (opens
+// the withdraw sheet pre-filled with the identity address as the destination).
+function fundIdentity() {
+  if (!mid) return;
+  asset = marketAssets()[0]?.id || 1;
+  sheet = "withdraw"; render();
+  setTimeout(() => { const el = $("#s-addr"); if (el) el.value = mid.address; }, 0);
 }
 // live swap quote: recompute the receive amount from the typed input + on-chain price
 function refreshSwapQuote() {
@@ -863,9 +908,7 @@ function wireSwap() {
   const go = $("#swap-go"); if (go) go.onclick = async () => {
     let amt; try { amt = toRawAs($("#swap-amt").value || "0", swapFrom); } catch (e) { return toast(e.message); }
     if (amt <= 0n) return toast("Enter an amount");
-    if (amt > mFrBal(swapFrom)) return toast(`Only ${toHuman(mFrBal(swapFrom), mDec(swapFrom))} ${mSym(swapFrom)} in your wallet`);
-    // ensure a trustline for the asset you'll receive
-    if (!(await ensureTrust(swapTo))) return;
+    if (amt > mIdBal(swapFrom)) return toast(`Only ${toHuman(mIdBal(swapFrom), mDec(swapFrom))} ${mSym(swapFrom)} in your DeFi identity`);
     const { out } = mSwapQuote(swapFrom, swapTo, amt);
     const minOut = (out * 995n) / 1000n; // 0.5% slippage guard
     runSwapMarket(swapFrom, amt, minOut);
@@ -880,13 +923,6 @@ function wireBorrow() {
   document.querySelectorAll("[data-mrepay]").forEach((b) => b.onclick = () => openMktSheet("repay", Number(b.dataset.mrepay)));
 }
 function openMktSheet(fn, id) { mktSheet = { fn, id }; sheet = "mkt"; render(); }
-// make sure the connected account trusts a market asset (needed to receive it)
-async function ensureTrust(id) {
-  if (mkt.frBal[`trust${id}`]) return true;
-  const a = mAssetById(id);
-  try { toast(`Add the ${a.symbol} trustline in Freighter…`); await addTrustline(fr.address, a.code, a.issuer); await marketRefresh(); return true; }
-  catch (e) { toast(e.message || "trustline failed"); return false; }
-}
 
 // ---- sheets (send / deposit / withdraw / receive) ----
 function sheetView() {
@@ -938,7 +974,7 @@ function sheetView() {
     };
     // the relevant balance/cap for this action
     let cap, capLbl;
-    if (fn === "supply") { cap = mFrBal(id); capLbl = "Wallet balance"; }
+    if (fn === "supply") { cap = mIdBal(id); capLbl = "DeFi identity balance"; }
     else if (fn === "withdraw") { cap = mkt.pos[id]?.supplied || 0n; capLbl = "Supplied"; }
     else if (fn === "repay") { cap = mkt.pos[id]?.borrowed || 0n; capLbl = "Your debt"; }
     else { cap = mkt.stats[id]?.reserve || 0n; capLbl = "Pool liquidity"; }
@@ -986,21 +1022,20 @@ function wireSheet() {
     if (fr.status && amt > fr.status.raw) return toast(`Only ${toHuman(fr.status.raw, decOf(asset))} ${symOf(asset)} available`);
     runDeposit(amt, asset);
   };
-  // market actions (supply / withdraw / borrow / repay) — signed by Freighter
+  // market actions (supply / withdraw / borrow / repay) — signed by the DeFi
+  // identity, gas paid by the relayer
   if (sheet === "mkt") {
     const id = mktSheet.id, fn = mktSheet.fn;
     let cap;
-    if (fn === "supply") cap = mFrBal(id);
+    if (fn === "supply") cap = mIdBal(id);
     else if (fn === "withdraw") cap = mkt.pos[id]?.supplied || 0n;
     else if (fn === "repay") cap = mkt.pos[id]?.borrowed || 0n;
     else cap = mkt.stats[id]?.reserve || 0n;
     const mx = $("#mkt-max"); if (mx) mx.onclick = () => { $("#s-amt").value = toHuman(cap, mDec(id)); };
-    const go = $("#s-go"); if (go) go.onclick = async () => {
+    const go = $("#s-go"); if (go) go.onclick = () => {
       let amt; try { amt = toRawAs($("#s-amt").value || "0", id); } catch (e) { return toast(e.message); }
       if (amt <= 0n) return toast("Enter an amount");
-      if (fn === "supply" && amt > mFrBal(id)) return toast(`Only ${toHuman(mFrBal(id), mDec(id))} ${mSym(id)} in your wallet`);
-      if (fn === "supply" && !(await ensureTrust(id))) return;
-      if (fn === "borrow" && !(await ensureTrust(id))) return;
+      if (fn === "supply" && amt > mIdBal(id)) return toast(`Only ${toHuman(mIdBal(id), mDec(id))} ${mSym(id)} in your DeFi identity`);
       const run = { supply: runSupply, withdraw: runWithdrawMkt, borrow: runBorrow, repay: runRepay }[fn];
       run(id, amt);
     };
@@ -1099,7 +1134,7 @@ function migrateActivity() {
   if (CFG.assets?.length) asset = CFG.assets[0].id;
   fetchPrices(); // non-blocking; re-renders when the EUR/USD rate lands
   const saved = localStorage.getItem(SEED_KEY);
-  if (saved && !CFG.error) { try { ME = deriveIdentity(saved); localHist = JSON.parse(localStorage.getItem(histKey()) || "[]"); history = [...localHist]; view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); marketRefresh(); } catch { localStorage.removeItem(SEED_KEY); } }
+  if (saved && !CFG.error) { try { ME = deriveIdentity(saved); localHist = JSON.parse(localStorage.getItem(histKey()) || "[]"); history = [...localHist]; view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); initMid(); marketRefresh(); } catch { localStorage.removeItem(SEED_KEY); } }
   if (location.hash === "#docs") view = "docs"; // shareable /#docs deep-link
   // route the docs view off the URL hash. Only #docs opens it and only a CLEARED
   // hash closes it; any other hash (#what, #model, …) is in-page TOC navigation
