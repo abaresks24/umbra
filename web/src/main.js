@@ -148,7 +148,7 @@ async function marketRefresh() {
     mkt.stats = stats; mkt.pos = pos; mkt.loadedAt = Date.now();
   } catch (e) { mkt.err = e.message || String(e); }
   mkt.loading = false;
-  if (ME && (tab === "swap" || tab === "earn" || tab === "borrow")) render();
+  if (ME && (tab === "earn" || tab === "borrow")) render();
 }
 // USD value of supplied collateral / debt across both market assets (for the hero)
 const mSuppliedUsd = () => marketAssets().reduce((s, a) => s + Number(toHuman(mkt.pos[a.id]?.supplied || 0n, mDec(a.id))) * mPriceUsd(a.id), 0);
@@ -341,13 +341,61 @@ async function doConsolidate(assetId) {
   markSpent([n1, n2]); scheduleRescans();
 }
 
-// Shielded SWAP — exchange one asset for another with amounts hidden, value
-// conserved at the public oracle rate, and the auditor ciphertext enforced. The
-// swap is internal (no token reserves move), so it stays as private as a transfer:
-// inputs are the from-asset notes; outputs are the to-asset note + from-asset change.
-// All market actions are signed by the user's Freighter account and settle on the
-// transparent market contract. Each runs the proving-style overlay for feedback,
-// then refreshes the on-chain snapshot.
+// ---------- Shielded SWAP (amounts AND assets hidden) ----------
+// A private exchange inside the shielded pool: you burn from-asset notes and mint a
+// to-asset note + change, value conserved at the public oracle rate. Amounts and the
+// asset of each note stay hidden (only the rate + a tiny rounding fee are public);
+// the auditor ciphertext is enforced. It is internal (no token moves), so it is as
+// private as a transfer and needs no liquidity for the swap itself.
+const swapRate = () => BigInt(Math.round(prices.eurUsd * Number(SWAP_SCALE))); // EURC price in SWAP_SCALE
+const priceOfId = (id, rate) => (Number(id) === 2 ? rate : SWAP_SCALE); // USD price of one unit
+function swapQuote(fromId, toId, amtIn, rate) {
+  const valueIn = amtIn * priceOfId(fromId, rate);
+  const out = valueIn / priceOfId(toId, rate); // floor
+  const feeValue = valueIn - out * priceOfId(toId, rate); // rounding remainder (public, tiny)
+  return { out, feeValue };
+}
+async function doSwap(fromId, toId, amtIn) {
+  const { chosen, sum } = selectInputs(amtIn, fromId);
+  const rate = swapRate();
+  const { out, feeValue } = swapQuote(fromId, toId, amtIn, rate);
+  if (out <= 0n) throw new Error("amount too small to swap");
+  const toNote = new Note({ amount: out, assetId: BigInt(toId), owner: ME.spend });
+  const change = new Note({ amount: sum - amtIn, assetId: BigInt(fromId), owner: ME.spend });
+  const w = buildSwapWitness({
+    tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })),
+    outputs: [toNote, change], rate, feeValue,
+    extData: { recipient: "swap", extAmount: "0", fee: "0" }, enc: enc([ME.viewPub, ME.viewPub]),
+    auditor: { pubX: CFG.auditorPubX, pubY: CFG.auditorPubY },
+  });
+  say("entering the umbra. proving the swap privately…");
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(w.witness, SWAP_WASM_URL, SWAP_ZKEY_URL);
+  say("proof formed. crossing the horizon…");
+  const res = await fetch(`${API_BASE}/api/swap`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ proof: proofToHex(proof), public: publicToHex(publicSignals), enc1: w.enc1, enc2: w.enc2 }),
+  });
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || "swap rejected");
+  say("settled in shadow");
+  markSpent(chosen); scheduleRescans();
+  return { hash: j.hash, out };
+}
+async function runSwap(fromId, toId, amtIn) {
+  if (proving) return;
+  proving = true; render(); disc?.occult();
+  try {
+    await rescan();
+    const { hash, out } = await doSwap(fromId, toId, amtIn);
+    pushHistory({ dir: "swap", amount: amtIn.toString(), assetId: fromId, outAmount: out.toString(), outAssetId: toId, hash });
+    disc?.settle();
+    toast(`Swapped privately`);
+  } catch (e) { say(e.message || String(e)); toast(humanizeErr(e.message || String(e))); disc?.idle(); proving = false; render(); return; }
+  proving = false; setTimeout(() => disc?.idle(), 1400); render();
+}
+
+// All market actions are signed by the DeFi identity (relayer-sponsored) and settle
+// on the transparent market contract; each runs the proving overlay, then refreshes.
 async function runMarket(label, fn, args, onDone) {
   if (mktBusy) return;
   if (!mid?.active) { toast("Activate your DeFi identity first"); return; }
@@ -382,8 +430,6 @@ function humanizeErr(m) {
   if (/Error\(Contract, #?\d*\)/.test(m) || /trap/i.test(m)) return "The market rejected this (check amount, trustline and balance)";
   return m.length > 120 ? m.slice(0, 120) + "…" : m;
 }
-const runSwapMarket = (fromId, amtIn, minOut) => runMarket(
-  `Swapped ${mSym(fromId)} → ${mSym(fromId === 1 ? 2 : 1)}`, "swap", [mA(mid.address), mU(fromId), mI(amtIn), mI(minOut)]);
 const runSupply = (id, amt) => runMarket(`Supplied ${toHuman(amt, mDec(id))} ${mSym(id)}`, "supply", [mA(mid.address), mU(id), mI(amt)]);
 const runWithdrawMkt = (id, amt) => runMarket(`Withdrew ${toHuman(amt, mDec(id))} ${mSym(id)}`, "withdraw", [mA(mid.address), mU(id), mI(amt)]);
 const runBorrow = (id, amt) => runMarket(`Borrowed ${toHuman(amt, mDec(id))} ${mSym(id)}`, "borrow", [mA(mid.address), mU(id), mI(amt)]);
@@ -739,33 +785,31 @@ function mktErrBar() { return mkt.err ? `<p class="panel-note" style="color:var(
 
 // — Swap: real oracle-priced exchange, honoured only if the pool holds enough —
 function swapPanel() {
-  const s = mkt.stats[swapTo];
-  const reserveOut = s ? toHuman(s.reserve, mDec(swapTo)) : "…";
-  const ratio = (mPriceUsd(swapFrom) / mPriceUsd(swapTo));
-  const frFrom = mid?.active ? toHuman(mIdBal(swapFrom), mDec(swapFrom)) : "—";
+  const rate = swapRate();
+  const fromBal = balanceOf(swapFrom), toBal = balanceOf(swapTo);
+  const ratio = Number(priceOfId(swapFrom, rate)) / Number(priceOfId(swapTo, rate));
   return `<div class="panel swap-panel">
-    ${identityBanner()}${mktErrBar()}
     <div class="swap-card">
       <div class="swap-leg">
-        <div class="swap-leg-top"><span class="lbl">You pay</span><span class="bal-mini">${esc(frFrom)} ${esc(mSym(swapFrom))}</span></div>
+        <div class="swap-leg-top"><span class="lbl">You pay</span><span class="bal-mini">${esc(toHuman(fromBal, decOf(swapFrom)))} ${esc(symOf(swapFrom))}</span></div>
         <div class="swap-leg-row">
           <input id="swap-amt" class="swap-input" inputmode="decimal" placeholder="0.0" autocomplete="off"/>
-          <button class="asset-pill" id="swap-from-pill">${esc(mSym(swapFrom))}</button>
+          <button class="asset-pill" id="swap-from-pill">${esc(symOf(swapFrom))}</button>
         </div>
       </div>
       <button class="swap-flip" id="swap-flip" title="flip direction" aria-label="flip direction">⇅</button>
       <div class="swap-leg">
-        <div class="swap-leg-top"><span class="lbl">You receive</span><span class="bal-mini">pool: ${esc(reserveOut)} ${esc(mSym(swapTo))}</span></div>
+        <div class="swap-leg-top"><span class="lbl">You receive</span><span class="bal-mini">${esc(toHuman(toBal, decOf(swapTo)))} ${esc(symOf(swapTo))}</span></div>
         <div class="swap-leg-row">
           <input id="swap-out" class="swap-input" placeholder="0.0" readonly/>
-          <button class="asset-pill" id="swap-to-pill">${esc(mSym(swapTo))}</button>
+          <button class="asset-pill" id="swap-to-pill">${esc(symOf(swapTo))}</button>
         </div>
       </div>
     </div>
-    <div class="swap-quote"><span>Rate · Reflector oracle</span><span class="mono">1 ${esc(mSym(swapFrom))} = ${esc(ratio.toFixed(4))} ${esc(mSym(swapTo))}</span></div>
-    <div class="swap-quote"><span>Fee → liquidity providers</span><span class="mono">0.30%</span></div>
-    ${mid?.active ? `<button class="btn primary wide" id="swap-go">Swap</button>` : ""}
-    <p class="panel-note">A real reserve-checked swap: the contract pays the output from suppliers' liquidity and reverts if the pool can't cover it. EUR/USD is read live on-chain from the Reflector oracle. The 0.30% fee accrues to the input asset's suppliers, so LP yield grows with volume.</p>
+    <div class="swap-quote"><span>Rate · oracle</span><span class="mono">1 ${esc(symOf(swapFrom))} = ${esc(ratio.toFixed(4))} ${esc(symOf(swapTo))}</span></div>
+    <div class="swap-quote"><span>Privacy</span><span>amounts + asset hidden · auditor-disclosed</span></div>
+    <button class="btn primary wide" id="swap-go">Swap privately</button>
+    <p class="panel-note">A fully private swap inside the shielded pool: the proof re-mints your value from one asset into the other with the amounts AND the asset of each note hidden on-chain — only the oracle rate is public. The auditor can still reconstruct it. Operates on your shielded balance.</p>
   </div>`;
 }
 
@@ -888,15 +932,15 @@ function fundIdentity() {
   sheet = "withdraw"; render();
   setTimeout(() => { const el = $("#s-addr"); if (el) el.value = mid.address; }, 0);
 }
-// live swap quote: recompute the receive amount from the typed input + on-chain price
+// live swap quote: recompute the receive amount from the typed input + oracle rate
 function refreshSwapQuote() {
   const inEl = $("#swap-amt"), outEl = $("#swap-out");
   if (!inEl || !outEl) return;
   try {
     const amt = toRawAs($("#swap-amt").value || "0", swapFrom);
     if (amt <= 0n) { outEl.value = ""; return; }
-    const { out } = mSwapQuote(swapFrom, swapTo, amt);
-    outEl.value = out > 0n ? toHuman(out, mDec(swapTo)) : "";
+    const { out } = swapQuote(swapFrom, swapTo, amt, swapRate());
+    outEl.value = out > 0n ? toHuman(out, decOf(swapTo)) : "";
   } catch { outEl.value = ""; }
 }
 function wireSwap() {
@@ -905,13 +949,11 @@ function wireSwap() {
   const fpp = $("#swap-from-pill"); if (fpp) fpp.onclick = flip;
   const tpp = $("#swap-to-pill"); if (tpp) tpp.onclick = flip;
   const inEl = $("#swap-amt"); if (inEl) inEl.oninput = refreshSwapQuote;
-  const go = $("#swap-go"); if (go) go.onclick = async () => {
+  const go = $("#swap-go"); if (go) go.onclick = () => {
     let amt; try { amt = toRawAs($("#swap-amt").value || "0", swapFrom); } catch (e) { return toast(e.message); }
     if (amt <= 0n) return toast("Enter an amount");
-    if (amt > mIdBal(swapFrom)) return toast(`Only ${toHuman(mIdBal(swapFrom), mDec(swapFrom))} ${mSym(swapFrom)} in your DeFi identity`);
-    const { out } = mSwapQuote(swapFrom, swapTo, amt);
-    const minOut = (out * 995n) / 1000n; // 0.5% slippage guard
-    runSwapMarket(swapFrom, amt, minOut);
+    if (amt > balanceOf(swapFrom)) return toast(`Only ${toHuman(balanceOf(swapFrom), decOf(swapFrom))} ${symOf(swapFrom)} in shadow`);
+    runSwap(swapFrom, swapTo, amt);
   };
 }
 function wireEarn() {
