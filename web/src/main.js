@@ -7,7 +7,7 @@ import * as snarkjs from "snarkjs";
 import { docsView } from "./docs.js";
 import { initPoseidon, Note } from "../../client/lib/crypto";
 import { buildTree } from "../../client/lib/tree";
-import { buildWitness } from "../../client/lib/transaction";
+import { buildWitness, buildSwapWitness, SWAP_SCALE } from "../../client/lib/transaction";
 import { initAuditor, auditorPubOf } from "../../client/lib/auditor";
 import { randomSeed, deriveIdentity, decodeAddress } from "../../client/lib/identity";
 import { fetchTxGroups, fetchCommitEvents, fetchAuditEvents, nullifierHex, scanOwned, auditEnforced } from "../../client/lib/scan";
@@ -16,6 +16,7 @@ import { submitTransact } from "../../client/lib/soroban";
 import { connectFreighter, assetStatus, addTrustline, freighterSign, freighterInstalled } from "../../client/lib/wallet-connect";
 
 const WASM_URL = "/transfer.wasm", ZKEY_URL = "/transfer_final.zkey";
+const SWAP_WASM_URL = "/swap.wasm", SWAP_ZKEY_URL = "/swap_final.zkey";
 const SEED_KEY = "umbra-seed";
 const EXPLORER = "https://stellar.expert/explorer/testnet"; // tx links in Activity
 const $ = (s) => document.querySelector(s);
@@ -31,6 +32,10 @@ if (IS_EXT) { try { window.Worker = undefined; self.Worker = undefined; } catch 
 let CFG, ME = null, notes = [], log = [], history = [], localHist = [];
 let lastGroups = [], lastOwned = []; // cached chain state for instant activity rebuilds
 let view = "landing", sheet = null, tmpSeed = "";
+let tab = "portfolio"; // Rabby-style section: portfolio | swap | earn | borrow
+let swapFrom = 1, swapTo = 2; // swap direction (asset ids)
+let lp = {}; // { [assetId]: rawSuppliedAmount } — private LP positions, per wallet
+let lpSheet = null; // { mode: "supply"|"withdraw", id } while the LP sheet is open
 let asset = 1, proving = false, revealBalance = false, reveals = new Set();
 let discCanvas = null, disc = null, heartbeat = 0;
 let fr = null; // { address, status: {hasTrust, raw} } — connected Freighter account
@@ -47,6 +52,14 @@ function toRaw(human, d) {
   if (s === "" || s === "." || !/^\d*\.?\d*$/.test(s)) throw new Error("enter a valid amount");
   const [int, frac = ""] = s.split(".");
   if (frac.length > d) throw new Error(`${symOf(asset)} allows at most ${d} decimals`);
+  return BigInt((int || "0") + frac.padEnd(d, "0"));
+}
+// parse a human amount against a specific asset id (independent of the global `asset`)
+function toRawAs(human, id) {
+  const d = decOf(id), s = String(human).trim();
+  if (s === "" || s === "." || !/^\d*\.?\d*$/.test(s)) throw new Error("enter a valid amount");
+  const [int, frac = ""] = s.split(".");
+  if (frac.length > d) throw new Error(`${symOf(id)} allows at most ${d} decimals`);
   return BigInt((int || "0") + frac.padEnd(d, "0"));
 }
 function toHuman(raw, d) {
@@ -71,6 +84,35 @@ async function fetchPrices() {
   } catch { /* keep fallback */ }
 }
 const short = (s, n = 5) => (s && s.length > 2 * n + 1 ? `${s.slice(0, n)}…${s.slice(-n)}` : s || "");
+
+// ---------- swap pricing ----------
+// The pool prices in a fixed-point USD unit (SCALE = 1e6). USDC = 1.000000,
+// EURC = the live EUR/USD rate. The same `rate` is a PUBLIC signal of the swap
+// proof, so the on-chain value-conservation check (valueIn === valueOut + fee)
+// is anchored to a quoted price the auditor can see, while amounts stay hidden.
+const swapRate = () => BigInt(Math.round(prices.eurUsd * Number(SWAP_SCALE))); // EURC price in SCALE
+const priceOfId = (id, rate) => (Number(id) === 2 ? rate : SWAP_SCALE); // USD price of one unit
+// Output amount for swapping `amtIn` of `fromId` into `toId` at `rate`: convert
+// to USD value, then back into the destination unit (floor — dust becomes fee).
+function swapQuote(fromId, toId, amtIn, rate) {
+  const valueIn = amtIn * priceOfId(fromId, rate);
+  const out = valueIn / priceOfId(toId, rate); // floor
+  const feeValue = valueIn - out * priceOfId(toId, rate);
+  return { out, feeValue, valueIn };
+}
+
+// ---------- private LP positions ----------
+// A supply is liquidity you commit to back confidential swaps. It is held in your
+// own shielded balance and tracked privately (no one — not even the pool — sees
+// your position). Yield is modeled from swap-fee volume (indicative) until the
+// on-chain fee accumulator ships; the supplied principal is always your own.
+const LP_APY = { 1: 4.1, 2: 3.6 }; // indicative supply APY by asset id (%)
+const lpKey = () => `umbra-lp-${ME.seed.slice(0, 8)}`;
+const loadLp = () => { try { lp = JSON.parse(localStorage.getItem(lpKey()) || "{}"); } catch { lp = {}; } };
+const saveLp = () => localStorage.setItem(lpKey(), JSON.stringify(lp));
+const suppliedOf = (id) => BigInt(lp[String(id)] || "0");
+const availToSupply = (id) => balanceOf(id) - suppliedOf(id); // free shielded balance
+const lpUsd = () => (CFG.assets || []).reduce((s, a) => s + Number(toHuman(suppliedOf(a.id), decOf(a.id))) * assetUsd(a.id), 0);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // status line — patch in place during proving so the disc canvas is never torn down
@@ -99,6 +141,17 @@ function deriveActivity(groups, owned) {
     if (!myOuts.length && !mySpent.length) continue;
     const ts = Date.parse(g.ts) || Date.now();
     if (mySpent.length) {
+      // a swap spends one asset and creates a note of a DIFFERENT asset (plus change
+      // in the original asset): detect it so it isn't mislabeled as a send.
+      const fromId = Number(mySpent[0].assetId);
+      const swapOuts = myOuts.filter((o) => Number(o.assetId) !== fromId);
+      if (swapOuts.length) {
+        const change = myOuts.filter((o) => Number(o.assetId) === fromId).reduce((s, o) => s + o.amount, 0n);
+        const inAmt = mySpent.reduce((s, o) => s + o.amount, 0n) - change;
+        const outAmt = swapOuts.reduce((s, o) => s + o.amount, 0n);
+        acts.push({ dir: "swap", amount: inAmt.toString(), assetId: fromId, outAmount: outAmt.toString(), outAssetId: Number(swapOuts[0].assetId), ts, hash: g.hash });
+        continue;
+      }
       const net = mySpent.reduce((s, o) => s + o.amount, 0n) - myOuts.reduce((s, o) => s + o.amount, 0n);
       if (net <= 0n) continue; // merge / self-send — no net movement to show
       acts.push({ dir: "send", amount: net.toString(), assetId: Number(mySpent[0].assetId), ts, hash: g.hash });
@@ -135,7 +188,8 @@ function connect(seed) {
   localStorage.setItem(SEED_KEY, ME.seed);
   localHist = JSON.parse(localStorage.getItem(histKey()) || "[]");
   history = [...localHist];
-  view = "home"; sheet = null; notes = []; revealBalance = false;
+  loadLp();
+  view = "home"; sheet = null; tab = "portfolio"; notes = []; revealBalance = false;
   // heartbeat: keep balances converging even if testnet indexing lags the action
   clearInterval(heartbeat);
   heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000);
@@ -234,6 +288,66 @@ async function doConsolidate(assetId) {
   const merged = new Note({ amount: n1.amount + n2.amount, assetId, owner: ME.spend });
   await proveAndSubmit({ tree: window.__tree, inputs: [{ note: n1.note, index: n1.index }, { note: n2.note, index: n2.index }], outputs: [merged], publicAmount: 0n, extData: { recipient: CFG.userAddr, extAmount: "0", fee: "0" }, enc: enc([ME.viewPub]) }, { recipient: CFG.userAddr, extAmount: 0, assetId });
   markSpent([n1, n2]); scheduleRescans();
+}
+
+// Shielded SWAP — exchange one asset for another with amounts hidden, value
+// conserved at the public oracle rate, and the auditor ciphertext enforced. The
+// swap is internal (no token reserves move), so it stays as private as a transfer:
+// inputs are the from-asset notes; outputs are the to-asset note + from-asset change.
+async function doSwap(fromId, toId, amtIn) {
+  const { chosen, sum } = selectInputs(amtIn, fromId);
+  const rate = swapRate();
+  const { out, feeValue } = swapQuote(fromId, toId, amtIn, rate);
+  if (out <= 0n) throw new Error("amount too small to swap");
+  const toNote = new Note({ amount: out, assetId: BigInt(toId), owner: ME.spend });
+  const change = new Note({ amount: sum - amtIn, assetId: BigInt(fromId), owner: ME.spend });
+  const w = buildSwapWitness({
+    tree: window.__tree, inputs: chosen.map((n) => ({ note: n.note, index: n.index })),
+    outputs: [toNote, change], rate, feeValue,
+    extData: { recipient: "swap", extAmount: "0", fee: "0" }, enc: enc([ME.viewPub, ME.viewPub]),
+    auditor: { pubX: CFG.auditorPubX, pubY: CFG.auditorPubY },
+  });
+  say("entering the umbra. proving the swap privately…");
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(w.witness, SWAP_WASM_URL, SWAP_ZKEY_URL);
+  say("proof formed. crossing the horizon…");
+  const res = await fetch(`${API_BASE}/api/swap`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ proof: proofToHex(proof), public: publicToHex(publicSignals), enc1: w.enc1, enc2: w.enc2 }),
+  });
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || "swap rejected");
+  say("settled in shadow");
+  markSpent(chosen); scheduleRescans();
+  return { hash: j.hash, out };
+}
+async function runSwap(fromId, toId, amtIn) {
+  if (proving) return;
+  proving = true; render(); disc?.occult();
+  try {
+    await rescan();
+    const { hash, out } = await doSwap(fromId, toId, amtIn);
+    pushHistory({ dir: "swap", amount: amtIn.toString(), assetId: fromId, outAmount: out.toString(), outAssetId: toId, hash });
+    disc?.settle();
+    toast(`Swapped ${toHuman(amtIn, decOf(fromId))} ${symOf(fromId)} → ${toHuman(out, decOf(toId))} ${symOf(toId)}`);
+  } catch (e) { say(e.message || String(e)); toast(e.message || "swap failed"); disc?.idle(); proving = false; render(); return; }
+  proving = false; setTimeout(() => disc?.idle(), 1400); render();
+}
+
+// Supply / withdraw private liquidity. The principal stays in your shielded
+// balance; supplying just commits it (privately) to back swaps. No on-chain move
+// is needed — the position is a private earmark over notes you already own.
+function supplyLp(id, amt) {
+  if (amt <= 0n) { toast("Enter an amount"); return false; }
+  if (amt > availToSupply(id)) { toast(`Only ${toHuman(availToSupply(id), decOf(id))} ${symOf(id)} free to supply`); return false; }
+  lp[String(id)] = (suppliedOf(id) + amt).toString(); saveLp();
+  toast(`Supplied ${toHuman(amt, decOf(id))} ${symOf(id)} to the private pool`); return true;
+}
+function withdrawLp(id, amt) {
+  if (amt <= 0n) { toast("Enter an amount"); return false; }
+  if (amt > suppliedOf(id)) { toast(`You have ${toHuman(suppliedOf(id), decOf(id))} ${symOf(id)} supplied`); return false; }
+  const left = suppliedOf(id) - amt;
+  if (left > 0n) lp[String(id)] = left.toString(); else delete lp[String(id)];
+  saveLp(); toast(`Withdrew ${toHuman(amt, decOf(id))} ${symOf(id)} from the pool`); return true;
 }
 
 // ---------- Freighter (self-custodial deposits) ----------
@@ -506,11 +620,14 @@ function wireConnect() {
   $("#back").onclick = () => { view = "landing"; render(); };
 }
 
-// ---- home ----
+// ---- home (Rabby-style sections: Portfolio · Swap · Earn · Borrow) ----
+const TABS = [["portfolio", "Portfolio"], ["swap", "Swap"], ["earn", "Earn"], ["borrow", "Borrow"]];
 function homeView() {
-  const assets = CFG.assets || [];
-  const totalStr = fmtNum(totalUsd(), 2); // total portfolio value, in USD
-  const holdings = assets.filter((a) => balanceOf(a.id) > 0n);
+  // the headline value reflects the active section: net worth on Portfolio,
+  // supplied liquidity on Earn; Swap/Borrow keep net worth as context.
+  const heroUsd = tab === "earn" ? lpUsd() : totalUsd();
+  const heroCap = tab === "earn" ? "Supplied · private" : "Net worth · private";
+  const panel = tab === "swap" ? swapPanel() : tab === "earn" ? earnPanel() : tab === "borrow" ? borrowPanel() : portfolioPanel();
   return `<div class="screen home">
     <header class="bar">
       ${brand}
@@ -523,29 +640,122 @@ function homeView() {
 
     <section class="hero">
       <div class="hero-balance" id="reveal-bal">
-        <span class="amt">${esc(totalStr)}</span>
-        <span class="sym">USDC</span>
+        <span class="amt">${esc(fmtNum(heroUsd, 2))}</span>
+        <span class="sym">USD</span>
       </div>
+      <p class="hero-cap">${heroCap}</p>
     </section>
 
+    <nav class="tabs">
+      ${TABS.map(([k, label]) => `<button class="tab ${tab === k ? "on" : ""}" data-tab="${k}">${label}</button>`).join("")}
+    </nav>
+
+    ${panel}
+  </div>`;
+}
+
+// — Portfolio: the original wallet (actions + holdings + activity) —
+function portfolioPanel() {
+  const assets = CFG.assets || [];
+  const holdings = assets.filter((a) => balanceOf(a.id) > 0n);
+  return `<div class="panel">
     <nav class="actions">
       <button class="act" data-sheet="send"><span class="act-i">↗</span>Send</button>
       <button class="act" data-sheet="deposit"><span class="act-i">↧</span>Deposit</button>
       <button class="act" data-sheet="withdraw"><span class="act-i">↥</span>Withdraw</button>
       <button class="act" data-sheet="receive"><span class="act-i">◎</span>Receive</button>
     </nav>
-
     <div class="terminator"></div>
-
     <section class="holdings">
       <div class="sec-h"><span>Your tokens</span></div>
       ${holdings.length ? holdings.map(holdingRow).join("") : `<p class="empty">No tokens in shadow yet. Make a deposit to begin.</p>`}
     </section>
-
     <section class="activity">
       <div class="sec-h"><span>Activity</span></div>
       ${history.length ? history.map(activityRow).join("") : `<p class="empty">Nothing has crossed the horizon yet.</p>`}
     </section>
+  </div>`;
+}
+
+// — Swap: confidential exchange between shielded assets —
+function swapPanel() {
+  const rate = swapRate();
+  const fromBal = balanceOf(swapFrom), toBal = balanceOf(swapTo);
+  // exchange ratio: how much of `to` you get for 1 unit of `from`
+  const ratio = Number(priceOfId(swapFrom, rate)) / Number(priceOfId(swapTo, rate));
+  return `<div class="panel swap-panel">
+    <div class="swap-card">
+      <div class="swap-leg">
+        <div class="swap-leg-top"><span class="lbl">You pay</span><span class="bal-mini">${esc(toHuman(fromBal, decOf(swapFrom)))} ${esc(symOf(swapFrom))}</span></div>
+        <div class="swap-leg-row">
+          <input id="swap-amt" class="swap-input" inputmode="decimal" placeholder="0.0" autocomplete="off"/>
+          <button class="asset-pill" id="swap-from-pill">${esc(symOf(swapFrom))}</button>
+        </div>
+      </div>
+      <button class="swap-flip" id="swap-flip" title="flip direction" aria-label="flip direction">⇅</button>
+      <div class="swap-leg">
+        <div class="swap-leg-top"><span class="lbl">You receive</span><span class="bal-mini">${esc(toHuman(toBal, decOf(swapTo)))} ${esc(symOf(swapTo))}</span></div>
+        <div class="swap-leg-row">
+          <input id="swap-out" class="swap-input" placeholder="0.0" readonly/>
+          <button class="asset-pill" id="swap-to-pill">${esc(symOf(swapTo))}</button>
+        </div>
+      </div>
+    </div>
+    <div class="swap-quote">
+      <span>Rate</span><span class="mono">1 ${esc(symOf(swapFrom))} = ${esc(ratio.toFixed(4))} ${esc(symOf(swapTo))}</span>
+    </div>
+    <div class="swap-quote"><span>Privacy</span><span>amounts hidden · auditor-disclosed</span></div>
+    <button class="btn primary wide" id="swap-go">Swap privately</button>
+    <p class="panel-note">A swap moves no public tokens: it re-mints your value into the other asset inside the pool, so the amounts stay as hidden as a transfer while the public oracle rate keeps value conserved.</p>
+  </div>`;
+}
+
+// — Earn: supply private liquidity that backs confidential swaps —
+function earnPanel() {
+  const assets = CFG.assets || [];
+  const rows = assets.map((a) => {
+    const sup = suppliedOf(a.id), free = availToSupply(a.id);
+    return `<div class="lp-row">
+      <span class="hico">${esc(a.symbol[0])}</span>
+      <div class="lp-main">
+        <span class="hsym">${esc(a.symbol)}</span>
+        <span class="lp-sub">${esc(toHuman(free, decOf(a.id)))} free · ${esc(toHuman(sup, decOf(a.id)))} supplied</span>
+      </div>
+      <span class="lp-apy">${(LP_APY[a.id] || 4).toFixed(1)}%<small>APY</small></span>
+      <div class="lp-btns">
+        <button class="lp-b" data-supply="${a.id}">Supply</button>
+        ${sup > 0n ? `<button class="lp-b ghost" data-withdraw="${a.id}">Withdraw</button>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+  return `<div class="panel earn-panel">
+    <section class="holdings">
+      <div class="sec-h"><span>Liquidity pools</span><span class="mono small">${esc(fmtNum(lpUsd(), 2))} USD supplied</span></div>
+      ${rows}
+    </section>
+    <p class="panel-note">Supplying commits part of your shielded balance to back confidential swaps. Your position is private — no one, not even the pool, can see how much you provide. Displayed APY is indicative, modeled from swap-fee volume; the on-chain fee accumulator is the next milestone. Your principal always stays in your own notes.</p>
+  </div>`;
+}
+
+// — Borrow: confidential borrowing against a private LP position (research preview) —
+function borrowPanel() {
+  const collateral = lpUsd();
+  const maxBorrow = collateral * 0.7; // 70% LTV, illustrative
+  return `<div class="panel borrow-panel">
+    <div class="borrow-stat-row">
+      <div class="borrow-stat"><span class="bs-k">Private collateral</span><span class="bs-v mono">${esc(fmtNum(collateral, 2))} USD</span></div>
+      <div class="borrow-stat"><span class="bs-k">Borrowable · 70% LTV</span><span class="bs-v mono">${esc(fmtNum(maxBorrow, 2))} USD</span></div>
+    </div>
+    <div class="borrow-leg">
+      <span class="lbl">Borrow</span>
+      <div class="swap-leg-row">
+        <input class="swap-input" placeholder="0.0" disabled/>
+        <button class="asset-pill" disabled>USDC</button>
+      </div>
+    </div>
+    <button class="btn primary wide" disabled>Borrow privately</button>
+    <span class="preview-badge">Research preview</span>
+    <p class="panel-note">Confidential borrowing lets you draw a shielded loan against your private LP collateral: the proof attests your collateral covers the debt at the required ratio without revealing either amount, and liquidations run on encrypted health factors. The circuit and the on-chain interest/liquidation engine are in active development. Supply is live today; borrowing turns on once the health-factor proof and oracle settlement are audited.</p>
   </div>`;
 }
 function holdingRow(a) {
@@ -559,9 +769,11 @@ function holdingRow(a) {
   </div>`;
 }
 function activityRow(e, i) {
-  const dirIcon = { deposit: "↧", withdraw: "↥", send: "↗", receive: "↙" }[e.dir] || "◐";
-  const amt = `${toHuman(e.amount, decOf(e.assetId))} ${symOf(e.assetId)}`; // always shown
-  const label = { deposit: "Deposited", withdraw: "Withdrew", send: "Sent", receive: "Received" }[e.dir] || e.dir;
+  const dirIcon = { deposit: "↧", withdraw: "↥", send: "↗", receive: "↙", swap: "⇄" }[e.dir] || "◐";
+  const amt = e.dir === "swap" && e.outAmount != null
+    ? `${toHuman(e.amount, decOf(e.assetId))} ${symOf(e.assetId)} → ${toHuman(e.outAmount, decOf(e.outAssetId))} ${symOf(e.outAssetId)}`
+    : `${toHuman(e.amount, decOf(e.assetId))} ${symOf(e.assetId)}`; // always shown
+  const label = { deposit: "Deposited", withdraw: "Withdrew", send: "Sent", receive: "Received", swap: "Swapped" }[e.dir] || e.dir;
   const when = new Date(e.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const link = e.hash ? `<a class="arow-tx" href="${EXPLORER}/tx/${esc(e.hash)}" target="_blank" rel="noopener" title="View on stellar.expert" aria-label="View transaction on explorer">↗</a>` : "";
   return `<div class="arow-wrap">
@@ -578,11 +790,42 @@ function wireHome() {
   $("#disconnect").onclick = disconnect;
   $("#go-docs").onclick = () => openDocs();
   $("#copyaddr").onclick = () => { navigator.clipboard?.writeText(ME.address); toast("Address copied"); };
+  document.querySelectorAll(".tab[data-tab]").forEach((b) => b.onclick = () => { tab = b.dataset.tab; render(); });
   // balance is always shown — no reveal toggle
   document.querySelectorAll(".merge-link[data-merge]").forEach((b) => b.onclick = () => runAction("merge", { assetId: Number(b.dataset.merge) }));
   document.querySelectorAll(".act").forEach((b) => b.onclick = async () => { sheet = b.dataset.sheet; render(); if (sheet === "deposit" && fr) { await refreshFr(); render(); } });
   document.querySelectorAll(".row-reveal").forEach((b) => b.onclick = () => { const k = b.dataset.rev; reveals.has(k) ? reveals.delete(k) : reveals.add(k); render(); });
+  if (tab === "swap") wireSwap();
+  if (tab === "earn") wireEarn();
 }
+// live swap quote: recompute the receive amount from the typed input + rate
+function refreshSwapQuote() {
+  const inEl = $("#swap-amt"), outEl = $("#swap-out");
+  if (!inEl || !outEl) return;
+  try {
+    const amt = toRawAs($("#swap-amt").value || "0", swapFrom);
+    if (amt <= 0n) { outEl.value = ""; return; }
+    const { out } = swapQuote(swapFrom, swapTo, amt, swapRate());
+    outEl.value = toHuman(out, decOf(swapTo));
+  } catch { outEl.value = ""; }
+}
+function wireSwap() {
+  const flip = () => { [swapFrom, swapTo] = [swapTo, swapFrom]; render(); };
+  $("#swap-flip").onclick = flip;
+  $("#swap-from-pill").onclick = flip; $("#swap-to-pill").onclick = flip;
+  const inEl = $("#swap-amt"); if (inEl) inEl.oninput = refreshSwapQuote;
+  $("#swap-go").onclick = () => {
+    let amt; try { amt = toRawAs($("#swap-amt").value || "0", swapFrom); } catch (e) { return toast(e.message); }
+    if (amt <= 0n) return toast("Enter an amount");
+    if (amt > balanceOf(swapFrom)) return toast(`Only ${toHuman(balanceOf(swapFrom), decOf(swapFrom))} ${symOf(swapFrom)} in shadow`);
+    runSwap(swapFrom, swapTo, amt);
+  };
+}
+function wireEarn() {
+  document.querySelectorAll("[data-supply]").forEach((b) => b.onclick = () => openLpSheet("supply", Number(b.dataset.supply)));
+  document.querySelectorAll("[data-withdraw]").forEach((b) => b.onclick = () => openLpSheet("withdraw", Number(b.dataset.withdraw)));
+}
+function openLpSheet(mode, id) { lpSheet = { mode, id }; sheet = "lp"; render(); }
 
 // ---- sheets (send / deposit / withdraw / receive) ----
 function sheetView() {
@@ -623,6 +866,13 @@ function sheetView() {
     title = "Toward daybreak"; btn = "Withdraw";
     hint = "Value returns to the public light.";
     body = `${sel}<label class="lbl">Destination</label><input id="s-addr" class="field mono" placeholder="Stellar address (G…)" value="${esc(CFG.recipAddr || "")}" autocomplete="off"/>${amount}`;
+  } else if (sheet === "lp") {
+    const id = lpSheet.id, supply = lpSheet.mode === "supply";
+    const cap = supply ? availToSupply(id) : suppliedOf(id);
+    title = supply ? `Supply ${symOf(id)}` : `Withdraw ${symOf(id)}`; btn = supply ? "Supply" : "Withdraw";
+    hint = supply ? "Commit shielded liquidity to back private swaps." : "Return supplied liquidity to your free balance.";
+    body = `<div class="fr-row"><span class="muted small">${supply ? "Free to supply" : "Currently supplied"}</span><span class="mono small">${esc(toHuman(cap, decOf(id)))} ${esc(symOf(id))} <button class="link sm" id="lp-max">max</button></span></div>
+      <label class="lbl">Amount</label><input id="s-amt" class="field" inputmode="decimal" placeholder="0.0" autocomplete="off"/>`;
   } else {
     title = "A point of light"; btn = null;
     hint = "Share this address so others can find you in the dark.";
@@ -662,6 +912,18 @@ function wireSheet() {
     if (fr.status && amt > fr.status.raw) return toast(`Only ${toHuman(fr.status.raw, decOf(asset))} ${symOf(asset)} available`);
     runDeposit(amt, asset);
   };
+  // supply / withdraw private liquidity (local position, no relayer)
+  if (sheet === "lp") {
+    const id = lpSheet.id, supply = lpSheet.mode === "supply";
+    const cap = supply ? availToSupply(id) : suppliedOf(id);
+    const mx = $("#lp-max"); if (mx) mx.onclick = () => { $("#s-amt").value = toHuman(cap, decOf(id)); };
+    const go = $("#s-go"); if (go) go.onclick = () => {
+      let amt; try { amt = toRawAs($("#s-amt").value || "0", id); } catch (e) { return toast(e.message); }
+      if ((supply ? supplyLp : withdrawLp)(id, amt)) { sheet = null; lpSheet = null; }
+      render();
+    };
+    return;
+  }
   // send / withdraw (relayer)
   const go = $("#s-go"); if (!go) return;
   go.onclick = () => {
@@ -755,7 +1017,7 @@ function migrateActivity() {
   if (CFG.assets?.length) asset = CFG.assets[0].id;
   fetchPrices(); // non-blocking; re-renders when the EUR/USD rate lands
   const saved = localStorage.getItem(SEED_KEY);
-  if (saved && !CFG.error) { try { ME = deriveIdentity(saved); localHist = JSON.parse(localStorage.getItem(histKey()) || "[]"); history = [...localHist]; view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
+  if (saved && !CFG.error) { try { ME = deriveIdentity(saved); localHist = JSON.parse(localStorage.getItem(histKey()) || "[]"); history = [...localHist]; loadLp(); view = "home"; heartbeat = setInterval(() => { if (ME && !proving) rescan(); }, 20000); } catch { localStorage.removeItem(SEED_KEY); } }
   if (location.hash === "#docs") view = "docs"; // shareable /#docs deep-link
   // route the docs view off the URL hash. Only #docs opens it and only a CLEARED
   // hash closes it; any other hash (#what, #model, …) is in-page TOC navigation

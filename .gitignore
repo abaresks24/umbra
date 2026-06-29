@@ -18,3 +18,5 @@ dist/
 web/public/DA.jpg
 .vercel
 extension/umbra-extension.zip
+!web/public/swap.wasm
+!web/public/swap_final.zkey
