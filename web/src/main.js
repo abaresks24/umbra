@@ -637,7 +637,7 @@ function homeView() {
   // the headline value reflects the active section: shielded net worth on
   // Portfolio/Swap, market positions on Earn (supplied) and Borrow (debt).
   const heroUsd = tab === "earn" ? mSuppliedUsd() : tab === "borrow" ? mDebtUsd() : totalUsd();
-  const heroCap = tab === "earn" ? "Supplied to market" : tab === "borrow" ? "Borrowed" : "Net worth · private";
+  const heroCap = tab === "earn" ? "Supplied to market" : tab === "borrow" ? "Borrowed" : "";
   const panel = tab === "swap" ? swapPanel() : tab === "earn" ? earnPanel() : tab === "borrow" ? borrowPanel() : portfolioPanel();
   return `<div class="screen home">
     <header class="bar">
@@ -654,7 +654,7 @@ function homeView() {
         <span class="amt">${esc(fmtNum(heroUsd, 2))}</span>
         <span class="sym">USD</span>
       </div>
-      <p class="hero-cap">${heroCap}</p>
+      ${heroCap ? `<p class="hero-cap">${heroCap}</p>` : ""}
     </section>
 
     <nav class="tabs">
