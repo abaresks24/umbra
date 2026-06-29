@@ -11,7 +11,29 @@
 //! reserves, utilization and fees are verifiable on-chain. Anonymity comes from the
 //! shielded pool that funds the addresses interacting here (private capital, public
 //! DeFi). Interest accrues per-interaction via supply/borrow indices.
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, token, Address, Env};
+use soroban_sdk::{contract, contractclient, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol};
+
+// ----- Reflector SEP-40 price oracle (on-chain EUR/USD) -----
+// The market reads EUR/USD straight from Reflector's decentralised forex feed, so
+// the price is a real on-chain oracle value, not an admin push. USDC is treated as
+// USD (the oracle's base). EURC is priced via lastprice(Other("EUR")).
+#[contracttype]
+#[derive(Clone)]
+pub enum OracleAsset {
+    Stellar(Address),
+    Other(Symbol),
+}
+#[contracttype]
+#[derive(Clone)]
+pub struct PriceData {
+    pub price: i128,
+    pub timestamp: u64,
+}
+#[contractclient(name = "OracleClient")]
+pub trait OracleInterface {
+    fn lastprice(env: Env, asset: OracleAsset) -> Option<PriceData>;
+    fn decimals(env: Env) -> u32;
+}
 
 // ----- fixed-point scales -----
 const WAD: i128 = 1_000_000_000_000; // 1e12 — index & rate scale
@@ -39,7 +61,9 @@ const SWAP_FEE_BPS: i128 = 30; // 0.30% taken from the input, paid to suppliers
 pub enum Key {
     Admin,
     Asset(u32),    // assetId -> token (SAC) address
-    Price,         // EURC price in USD, scaled 1e7 (pushed by the keeper)
+    Price,         // EURC price in USD, scaled 1e7 (fallback if no oracle)
+    Oracle,        // Reflector forex feed (SEP-40) address
+    OracleDiv,     // divisor to bring the oracle's decimals down to PRICE_SCALE (1e7)
     Market(u32),   // assetId -> Market
     Supply(Address, u32), // account supply shares for an asset
     Borrow(Address, u32), // account borrow shares for an asset
@@ -89,8 +113,22 @@ fn put_shares(env: &Env, key: Key, v: i128) {
 fn token_of(env: &Env, asset: u32) -> Address {
     env.storage().instance().get(&Key::Asset(asset)).expect("asset not registered")
 }
+// USD price of one unit (1e7 scale). USDC == USD == 1.0. EURC comes from the
+// Reflector oracle (live EUR/USD), falling back to the admin-set price if the feed
+// has no data or no oracle is configured.
 fn price_of(env: &Env, asset: u32) -> i128 {
-    if asset == 1 { PRICE_SCALE } else { env.storage().instance().get(&Key::Price).unwrap_or(PRICE_SCALE) }
+    if asset == 1 { return PRICE_SCALE; }
+    let s = env.storage().instance();
+    if let Some(oracle) = s.get::<Key, Address>(&Key::Oracle) {
+        let client = OracleClient::new(env, &oracle);
+        // try_ variant: if the feed errors or has no data, fall back instead of trapping
+        if let Ok(Ok(Some(pd))) = client.try_lastprice(&OracleAsset::Other(Symbol::new(env, "EUR"))) {
+            let div: i128 = s.get(&Key::OracleDiv).unwrap_or(10_000_000);
+            let p = pd.price / div;
+            if p > 0 { return p; }
+        }
+    }
+    s.get(&Key::Price).unwrap_or(PRICE_SCALE)
 }
 fn usd(env: &Env, asset: u32, amount: i128) -> i128 { mul_div(amount, price_of(env, asset), PRICE_SCALE) }
 // physical cash the contract holds for an asset (the real reserve)
@@ -179,13 +217,26 @@ impl UmbraMarket {
         s.set(&Key::Price, &eurc_price);
     }
 
-    /// Keeper pushes the live EUR/USD price (scaled 1e7). Admin-authenticated.
+    /// Fallback EUR/USD price (scaled 1e7), used only if the oracle has no data.
     pub fn set_price(env: Env, eurc_price: i128) {
         let admin: Address = env.storage().instance().get(&Key::Admin).expect("not init");
         admin.require_auth();
         assert!(eurc_price > 0, "bad price");
         env.storage().instance().set(&Key::Price, &eurc_price);
     }
+
+    /// Wire the Reflector SEP-40 forex oracle. The contract then reads EUR/USD live
+    /// on-chain. `div` normalises the oracle's decimals to 1e7 (Reflector forex uses
+    /// 14 decimals -> div = 1e7). Passed in to avoid a cross-contract call here.
+    pub fn set_oracle(env: Env, oracle: Address, div: i128) {
+        let s = env.storage().instance();
+        let admin: Address = s.get(&Key::Admin).expect("not init");
+        admin.require_auth();
+        assert!(div > 0, "bad divisor");
+        s.set(&Key::Oracle, &oracle);
+        s.set(&Key::OracleDiv, &div);
+    }
+    pub fn oracle(env: Env) -> Option<Address> { env.storage().instance().get(&Key::Oracle) }
 
     /// Supply liquidity (also counts as collateral). Pulls `amount` from `from`.
     pub fn supply(env: Env, from: Address, asset: u32, amount: i128) {

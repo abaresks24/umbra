@@ -724,10 +724,10 @@ function swapPanel() {
         </div>
       </div>
     </div>
-    <div class="swap-quote"><span>Rate (oracle)</span><span class="mono">1 ${esc(mSym(swapFrom))} = ${esc(ratio.toFixed(4))} ${esc(mSym(swapTo))}</span></div>
+    <div class="swap-quote"><span>Rate · Reflector oracle</span><span class="mono">1 ${esc(mSym(swapFrom))} = ${esc(ratio.toFixed(4))} ${esc(mSym(swapTo))}</span></div>
     <div class="swap-quote"><span>Fee → liquidity providers</span><span class="mono">0.30%</span></div>
     ${fr ? `<button class="btn primary wide" id="swap-go">Swap</button>` : ""}
-    <p class="panel-note">A real reserve-checked swap: the contract pays the output from suppliers' liquidity and reverts if the pool can't cover it. The 0.30% fee accrues to the input asset's suppliers, so LP yield grows with volume.</p>
+    <p class="panel-note">A real reserve-checked swap: the contract pays the output from suppliers' liquidity and reverts if the pool can't cover it. EUR/USD is read live on-chain from the Reflector oracle. The 0.30% fee accrues to the input asset's suppliers, so LP yield grows with volume.</p>
   </div>`;
 }
 

@@ -17,6 +17,8 @@ async function shR(c, t = 8) { for (let i = 0; i < t; i++) { try { return sh(c);
 const baseCfg = require(path.join(ROOT, "api/_config.js"));
 const USDC = baseCfg.assets.find((a) => a.id === 1);
 const EURC = baseCfg.assets.find((a) => a.id === 2);
+// Reflector SEP-40 forex feed on testnet (base USD, EUR available, 14 decimals)
+const ORACLE = "CCSSOHTBL3LEWUCBBEB5NJFC2OKFRC74OWEIJIZLRJBGAAU4VMU5NV4W";
 
 async function liveEurUsd() {
   try { const j = await (await fetch("https://api.coingecko.com/api/v3/simple/price?ids=euro-coin&vs_currencies=usd")).json(); if (j?.["euro-coin"]?.usd) return Math.round(j["euro-coin"].usd * 1e7); } catch {}
@@ -27,16 +29,18 @@ async function liveEurUsd() {
   const ADMIN = sh(`stellar keys address shield`);
   const price = await liveEurUsd();
   console.log("deploying market on Circle USDC/EURC… price 1e7 =", price);
-  const market = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
+  const market = (await shR(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`)).split("\n").pop();
   for (let i = 0; i < 20; i++) { try { await new rpc.Server(RPC).getContractData(market, "Admin"); break; } catch { await sleep(4000); } }
   await sleep(4000);
   await shR(`stellar contract invoke --id ${market} --source shield --network testnet -- init --admin ${ADMIN} --usdc ${USDC.sac} --eurc ${EURC.sac} --eurc_price ${price}`);
+  // wire the Reflector forex oracle: EUR/USD is now read live on-chain
+  await shR(`stellar contract invoke --id ${market} --source shield --network testnet -- set_oracle --oracle ${ORACLE} --div 10000000`);
 
   const marketAssets = [
     { id: 1, symbol: "USDC", sac: USDC.sac, code: USDC.code, issuer: USDC.issuer, decimals: 7 },
     { id: 2, symbol: "EURC", sac: EURC.sac, code: EURC.code, issuer: EURC.issuer, decimals: 7 },
   ];
-  fs.writeFileSync(path.join(ROOT, "circuits/build/market_config.json"), JSON.stringify({ market, marketAssets, eurcPrice: price, admin: ADMIN, rpc: RPC }, null, 2));
+  fs.writeFileSync(path.join(ROOT, "circuits/build/market_config.json"), JSON.stringify({ market, marketAssets, oracle: ORACLE, eurcPrice: price, admin: ADMIN, rpc: RPC }, null, 2));
   const cfgPath = path.join(ROOT, "api/_config.js");
   let src = fs.readFileSync(cfgPath, "utf8");
   src = /"market":/.test(src) ? src.replace(/"market":\s*"[^"]*"/, `"market": "${market}"`) : src.replace(/("hasSwap":)/, `"market": "${market}",\n  $1`);
