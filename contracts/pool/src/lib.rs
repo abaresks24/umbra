@@ -23,6 +23,7 @@ pub enum Key {
     AuditorY,
     Asset(U256),         // assetId -> token (SAC) address
     Nullifier(BytesN<32>),
+    SwapVk,              // VK for the shielded-swap circuit
 }
 
 fn u256_from_u128(env: &Env, v: u128) -> U256 {
@@ -70,6 +71,59 @@ impl ShieldedPool {
 
     pub fn asset_token(env: Env, asset_id: U256) -> Option<Address> {
         env.storage().instance().get(&Key::Asset(asset_id))
+    }
+
+    /// Configure the shielded-swap verification key. Admin only.
+    pub fn set_swap_vk(env: Env, vk_bytes: Bytes) {
+        let s = env.storage().instance();
+        let admin: Address = s.get(&Key::Admin).expect("not initialised");
+        admin.require_auth();
+        s.set(&Key::SwapVk, &vk_bytes);
+    }
+
+    /// Shielded SWAP: convert value between assets (e.g. USDC -> EURC) at the
+    /// proof's oracle rate, all amounts hidden. A swap is INTERNAL: no token
+    /// crosses the pool boundary (reserves stay; liquidity is pre-funded), so it
+    /// emits the same opaque commit/nullify/audit events as a private transfer and
+    /// the enforced auditor ciphertext still covers each (per-asset) output.
+    /// NOTE (demo): the public `rate` signal is trusted here; production would bind
+    /// it to an on-chain oracle so a swapper can't pick a favourable price.
+    pub fn swap(env: Env, proof: Bytes, public: Bytes, enc1: Bytes, enc2: Bytes) {
+        let s = env.storage().instance();
+        let vk: Bytes = s.get(&Key::SwapVk).expect("swap not configured");
+        assert!(verifier::verify(&env, &vk, &proof, &public), "invalid swap proof");
+
+        let root = verifier::root(&env, &public);
+        assert!(merkle::is_known_root(&env, root), "unknown merkle root");
+
+        let ax: U256 = s.get(&Key::AuditorX).unwrap();
+        let ay: U256 = s.get(&Key::AuditorY).unwrap();
+        assert!(verifier::auditor_pub(&env, &public, 0) == ax, "wrong auditor key");
+        assert!(verifier::auditor_pub(&env, &public, 1) == ay, "wrong auditor key");
+
+        let nf0 = verifier::nullifier(&env, &public, 0);
+        let nf1 = verifier::nullifier(&env, &public, 1);
+        assert!(!s.has(&Key::Nullifier(nf0.clone())), "nullifier 0 already spent");
+        assert!(!s.has(&Key::Nullifier(nf1.clone())), "nullifier 1 already spent");
+        s.set(&Key::Nullifier(nf0.clone()), &true);
+        s.set(&Key::Nullifier(nf1.clone()), &true);
+
+        let c0 = verifier::commitment(&env, &public, 0);
+        let c1 = verifier::commitment(&env, &public, 1);
+        let (i0, i1) = merkle::insert_pair(&env, c0.clone(), c1.clone());
+
+        env.events().publish((symbol_short!("commit"), i0), (c0, enc1));
+        env.events().publish((symbol_short!("commit"), i1), (c1, enc2));
+        env.events().publish((symbol_short!("nullify"),), (nf0, nf1));
+
+        let rx = verifier::auditor_r(&env, &public, 0);
+        let ry = verifier::auditor_r(&env, &public, 1);
+        env.events().publish((symbol_short!("audit"), i0),
+            (rx.clone(), ry.clone(), verifier::auditor_cipher(&env, &public, 0, 0),
+             verifier::auditor_cipher(&env, &public, 0, 1), verifier::auditor_cipher(&env, &public, 0, 2), verifier::auditor_cipher(&env, &public, 0, 3)));
+        env.events().publish((symbol_short!("audit"), i1),
+            (rx, ry, verifier::auditor_cipher(&env, &public, 1, 0),
+             verifier::auditor_cipher(&env, &public, 1, 1), verifier::auditor_cipher(&env, &public, 1, 2), verifier::auditor_cipher(&env, &public, 1, 3)));
     }
 
     /// Shield / transfer / unshield. `ext_amount` is signed: >0 deposits USDC into

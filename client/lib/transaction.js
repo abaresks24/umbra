@@ -156,6 +156,89 @@ function buildWitness({ tree, inputs, outputs, publicAmount, extData, enc, audit
     auditorR: aud.R, auditorCipher: aud.ciphers, assetId: asset };
 }
 
+// ============================ SWAP ============================
+// Witness for the swap circuit (per-note assetId, value-conserved at `rate`).
+// rate = EURC value in USDC, scaled by SCALE (1e6). price(USDC)=SCALE, price(EURC)=rate.
+const SWAP_SCALE = 1000000n;
+const priceOf = (assetId, rate) => (BigInt(assetId) === 2n ? BigInt(rate) : SWAP_SCALE);
+
+function swapNodeArtifacts() {
+  const path = require("path");
+  return {
+    WASM: path.join(__dirname, "../../circuits/build/swap_js/swap.wasm"),
+    ZKEY: path.join(__dirname, "../../circuits/build/swap_final.zkey"),
+  };
+}
+
+// inputs: [{ note, index }] (real input note, e.g. a USDC note) + auto dummy.
+// outputs: [Note] (e.g. the EURC note then the USDC change), each with its assetId set.
+// rate: scaled int. feeValue: value units kept by the pool (>=0).
+function buildSwapWitness({ tree, inputs, outputs, rate, feeValue = 0n, extData, enc, auditor }) {
+  auditor = auditor || _defaultAuditor;
+  if (!auditor) throw new Error("auditor pubkey { pubX, pubY } is required");
+  const realIns = inputs.slice();
+  const nRealOuts = outputs.length;
+  const realOuts = outputs.slice();
+  // dummies are USDC (assetId 1) amount 0 so Price() stays valid and value is 0
+  while (realIns.length < N_INS) realIns.push({ note: Note.dummy(1n), index: 0 });
+  while (realOuts.length < N_OUTS) realOuts.push(Note.dummy(1n));
+  if (realIns.length > N_INS || realOuts.length > N_OUTS) throw new Error("too many notes");
+
+  // value conservation (off-chain check for a clearer error)
+  const valIn = realIns.reduce((a, x) => a + x.note.amount * priceOf(x.note.assetId, rate), 0n);
+  const valOut = realOuts.reduce((a, n) => a + n.amount * priceOf(n.assetId, rate), 0n);
+  if (valIn !== valOut + BigInt(feeValue)) throw new Error(`swap value not conserved: in=${valIn} != out=${valOut} + fee=${feeValue}`);
+
+  extData = { ...extData };
+  let encOut;
+  if (enc) encOut = realOuts.map((note, i) => encryptOutput(note, i < nRealOuts ? enc.recipients[i] : enc.senderViewPub));
+  else encOut = [extData.encryptedOutput1 || "00", extData.encryptedOutput2 || "00"];
+  extData.encryptedOutput1 = encOut[0];
+  extData.encryptedOutput2 = encOut[1];
+
+  const inputNullifier = [], inAssetId = [], inAmount = [], inPrivateKey = [], inBlinding = [], inPathIndices = [], inPathElements = [];
+  for (const { note, index } of realIns) {
+    const proof = note.amount !== 0n ? merkleProof(tree, index) : dummyProof();
+    inputNullifier.push(toStr(note.nullifier(proof.pathIndices)));
+    inAssetId.push(toStr(note.assetId));
+    inAmount.push(toStr(note.amount));
+    inPrivateKey.push(toStr(note.keypair.privkey));
+    inBlinding.push(toStr(note.blinding));
+    inPathIndices.push(toStr(proof.pathIndices));
+    inPathElements.push(proof.pathElements);
+  }
+  const outputCommitment = [], outAssetId = [], outAmount = [], outPubkey = [], outBlinding = [];
+  for (const note of realOuts) {
+    outputCommitment.push(toStr(note.commitment()));
+    outAssetId.push(toStr(note.assetId));
+    outAmount.push(toStr(note.amount));
+    outPubkey.push(toStr(note.pubkey));
+    outBlinding.push(toStr(note.blinding));
+  }
+
+  const encRandom = randomScalar();
+  const msgs = realOuts.map((n) => [n.amount, n.assetId, n.pubkey, n.blinding]);
+  const aud = encryptOutputsToAuditor(msgs, auditor, encRandom);
+  const auditorPubKey = [String(auditor.pubX), String(auditor.pubY)];
+  const auditorR = aud.R.map(String);
+  const auditorCipher = aud.ciphers.map((row) => row.map(String));
+  const edHash = extDataHash(extData);
+
+  const witness = {
+    root: tree.root.toString(), rate: BigInt(rate).toString(), feeValue: BigInt(feeValue).toString(),
+    extDataHash: edHash.toString(), inputNullifier, outputCommitment,
+    inAssetId, inAmount, inPrivateKey, inBlinding, inPathIndices, inPathElements,
+    outAssetId, outAmount, outPubkey, outBlinding,
+    auditorPubKey, auditorR, auditorCipher, encRandom: encRandom.toString(),
+  };
+  const expectedPublic = [
+    witness.root, witness.rate, witness.feeValue, witness.extDataHash,
+    ...inputNullifier, ...outputCommitment, ...auditorPubKey, ...auditorR, ...auditorCipher.flat(),
+  ];
+  return { witness, expectedPublic, outputs: realOuts, outputCommitment, inputNullifier,
+    enc1: extData.encryptedOutput1, enc2: extData.encryptedOutput2, auditorR: aud.R, auditorCipher: aud.ciphers };
+}
+
 // Node: prove with on-disk artifacts. Browser: call snarkjs.groth16.fullProve
 // directly with served URLs (see web/src/wallet.js).
 async function prove(witness, artifacts) {
@@ -163,5 +246,6 @@ async function prove(witness, artifacts) {
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(witness, WASM, ZKEY);
   return { proof, publicSignals };
 }
+async function proveSwap(witness) { return prove(witness, swapNodeArtifacts()); }
 
-module.exports = { N_INS, N_OUTS, wrap, buildWitness, prove, setDefaultAuditor };
+module.exports = { N_INS, N_OUTS, wrap, buildWitness, buildSwapWitness, prove, proveSwap, setDefaultAuditor, SWAP_SCALE };
