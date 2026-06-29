@@ -755,7 +755,7 @@ function earnPanel() {
   return `<div class="panel earn-panel">
     ${frBanner("supply liquidity")}${mktErrBar()}
     <section class="holdings">
-      <div class="sec-h"><span>Liquidity pools</span><a class="link sm" href="${esc(CFG.circleFaucet || "https://faucet.circle.com")}" target="_blank" rel="noopener">get USDC/EURC ↗</a></div>
+      <div class="sec-h"><span>Liquidity pools</span></div>
       ${rows || `<p class="empty">Loading market…</p>`}
     </section>
     <p class="panel-note">Suppliers provide the liquidity that backs both lending and swaps. Supply APY is 0% when nothing is borrowed and rises with utilization, plus the 0.30% swap fees. Everything here is read live from the contract. The market trades real Circle testnet USDC/EURC.</p>
