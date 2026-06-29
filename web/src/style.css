@@ -322,6 +322,14 @@ textarea.field { resize: none; line-height: 1.5; }
 .btn.wide { width: 100%; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ---- market (live DeFi sections) ---- */
+.mkt-connect { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: var(--r); background: var(--paper-2); box-shadow: inset 0 0 0 1.5px var(--line); margin-bottom: 6px; }
+.lp-apy small { white-space: nowrap; }
+.bs-v.hf-warn { color: var(--danger); }
+.borrow-stat-row { flex-wrap: wrap; }
+.borrow-stat { min-width: 90px; }
+.sec-h .link.sm { color: var(--accent-deep); text-decoration: underline; font-size: var(--t-xs); }
+
 /* ============================ proving ============================ */
 .proving { gap: 26px; }
 .prove-eclipse { width: clamp(96px, 26vw, 120px); height: auto; animation: pulse 2.4s var(--ease) infinite; }
