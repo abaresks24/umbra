@@ -755,10 +755,10 @@ function earnPanel() {
   return `<div class="panel earn-panel">
     ${frBanner("supply liquidity")}${mktErrBar()}
     <section class="holdings">
-      <div class="sec-h"><span>Liquidity pools</span>${fr ? `<button class="link sm" id="mkt-faucet">get test tokens</button>` : ""}</div>
+      <div class="sec-h"><span>Liquidity pools</span><a class="link sm" href="${esc(CFG.circleFaucet || "https://faucet.circle.com")}" target="_blank" rel="noopener">get USDC/EURC ↗</a></div>
       ${rows || `<p class="empty">Loading market…</p>`}
     </section>
-    <p class="panel-note">Suppliers provide the liquidity that backs both lending and swaps. Supply APY is 0% when nothing is borrowed and rises with utilization, plus the 0.30% swap fees. Everything here is read live from the contract.</p>
+    <p class="panel-note">Suppliers provide the liquidity that backs both lending and swaps. Supply APY is 0% when nothing is borrowed and rises with utilization, plus the 0.30% swap fees. Everything here is read live from the contract. The market trades real Circle testnet USDC/EURC.</p>
   </div>`;
 }
 
@@ -874,7 +874,6 @@ function wireSwap() {
 function wireEarn() {
   document.querySelectorAll("[data-msupply]").forEach((b) => b.onclick = () => openMktSheet("supply", Number(b.dataset.msupply)));
   document.querySelectorAll("[data-mwithdraw]").forEach((b) => b.onclick = () => openMktSheet("withdraw", Number(b.dataset.mwithdraw)));
-  const fa = $("#mkt-faucet"); if (fa) fa.onclick = () => runFaucet();
 }
 function wireBorrow() {
   document.querySelectorAll("[data-mborrow]").forEach((b) => b.onclick = () => openMktSheet("borrow", Number(b.dataset.mborrow)));
@@ -887,19 +886,6 @@ async function ensureTrust(id) {
   const a = mAssetById(id);
   try { toast(`Add the ${a.symbol} trustline in Freighter…`); await addTrustline(fr.address, a.code, a.issuer); await marketRefresh(); return true; }
   catch (e) { toast(e.message || "trustline failed"); return false; }
-}
-// Faucet: ensure trustlines, then mint test USDC/EURC to the connected account.
-async function runFaucet() {
-  if (!fr) return toast("Connect Freighter first");
-  try {
-    for (const a of marketAssets()) { if (!mkt.frBal[`trust${a.id}`]) { toast(`Add ${a.symbol} trustline…`); await addTrustline(fr.address, a.code, a.issuer); } }
-    await marketRefresh();
-    toast("Requesting test tokens…");
-    const r = await fetch(`${API_BASE}/api/faucet`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: fr.address }) });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || "faucet failed");
-    toast("Test USDC + EURC sent"); setTimeout(marketRefresh, 4000);
-  } catch (e) { toast(humanizeErr(e.message || String(e))); }
 }
 
 // ---- sheets (send / deposit / withdraw / receive) ----

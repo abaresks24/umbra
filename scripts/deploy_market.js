@@ -1,6 +1,7 @@
-// Deploy + init the Umbra Market on mintable testnet USDC/EURC (self-issued by
-// `usdc-issuer`), and write the config. Seeding liquidity + the on-chain E2E live
-// in scripts/market_seed.js (run after this). Reliable: long propagation waits.
+// Deploy + init the Umbra Market on the REAL Circle testnet USDC/EURC (the same
+// SACs the shielded pool uses), and write the config. No minting, no seeding — the
+// operator funds the pools and wallets themselves via the Circle faucet. Admin =
+// `shield` key (also the EUR/USD price keeper).
 const { execSync } = require("child_process");
 const fs = require("fs"); const path = require("path");
 const { rpc } = require("@stellar/stellar-sdk");
@@ -12,9 +13,10 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function shR(c, t = 8) { for (let i = 0; i < t; i++) { try { return sh(c); } catch (e) { if (i === t - 1) throw e; await sleep(5000); } } }
 
-const ISSUER = sh(`stellar keys address usdc-issuer`);
-const USDC_SAC = "CCDJQFER3F56PVF3HNY3IQ6F7BQQHTQFJV4J7QN7NTAP4C75OVZR27JY";
-const EURC_SAC = "CBNPZ4HUG2S6SRO7KRBHTNLDATIKRK7OY5QOYBRUYJZWRMKTBUSBUA4E";
+// the market trades the SAME Circle assets as the shielded pool
+const baseCfg = require(path.join(ROOT, "api/_config.js"));
+const USDC = baseCfg.assets.find((a) => a.id === 1);
+const EURC = baseCfg.assets.find((a) => a.id === 2);
 
 async function liveEurUsd() {
   try { const j = await (await fetch("https://api.coingecko.com/api/v3/simple/price?ids=euro-coin&vs_currencies=usd")).json(); if (j?.["euro-coin"]?.usd) return Math.round(j["euro-coin"].usd * 1e7); } catch {}
@@ -22,21 +24,19 @@ async function liveEurUsd() {
 }
 
 (async () => {
-  for (const code of ["USDC", "EURC"]) { try { sh(`stellar contract asset deploy --asset ${code}:${ISSUER} --source usdc-issuer --network testnet`); } catch {} }
   const ADMIN = sh(`stellar keys address shield`);
   const price = await liveEurUsd();
-  console.log("deploying market on test USDC/EURC… price 1e7 =", price);
+  console.log("deploying market on Circle USDC/EURC… price 1e7 =", price);
   const market = sh(`stellar contract deploy --wasm "${WASM}" --source shield --network testnet`).split("\n").pop();
-  // wait for the new contract instance to be queryable before init
   for (let i = 0; i < 20; i++) { try { await new rpc.Server(RPC).getContractData(market, "Admin"); break; } catch { await sleep(4000); } }
   await sleep(4000);
-  await shR(`stellar contract invoke --id ${market} --source shield --network testnet -- init --admin ${ADMIN} --usdc ${USDC_SAC} --eurc ${EURC_SAC} --eurc_price ${price}`);
+  await shR(`stellar contract invoke --id ${market} --source shield --network testnet -- init --admin ${ADMIN} --usdc ${USDC.sac} --eurc ${EURC.sac} --eurc_price ${price}`);
 
   const marketAssets = [
-    { id: 1, symbol: "USDC", sac: USDC_SAC, code: "USDC", issuer: ISSUER, decimals: 7 },
-    { id: 2, symbol: "EURC", sac: EURC_SAC, code: "EURC", issuer: ISSUER, decimals: 7 },
+    { id: 1, symbol: "USDC", sac: USDC.sac, code: USDC.code, issuer: USDC.issuer, decimals: 7 },
+    { id: 2, symbol: "EURC", sac: EURC.sac, code: EURC.code, issuer: EURC.issuer, decimals: 7 },
   ];
-  fs.writeFileSync(path.join(ROOT, "circuits/build/market_config.json"), JSON.stringify({ market, marketAssets, eurcPrice: price, admin: ADMIN, issuer: ISSUER, rpc: RPC }, null, 2));
+  fs.writeFileSync(path.join(ROOT, "circuits/build/market_config.json"), JSON.stringify({ market, marketAssets, eurcPrice: price, admin: ADMIN, rpc: RPC }, null, 2));
   const cfgPath = path.join(ROOT, "api/_config.js");
   let src = fs.readFileSync(cfgPath, "utf8");
   src = /"market":/.test(src) ? src.replace(/"market":\s*"[^"]*"/, `"market": "${market}"`) : src.replace(/("hasSwap":)/, `"market": "${market}",\n  $1`);
@@ -44,6 +44,6 @@ async function liveEurUsd() {
   else src = src.replace(/("hasSwap":)/, `"marketAssets": ${JSON.stringify(marketAssets)},\n  $1`);
   fs.writeFileSync(cfgPath, src);
 
-  console.log("\n✅ market deployed + initialised:", market);
-  console.log("   config written; api/_config.js patched. Next: node scripts/market_seed.js");
+  console.log("\n✅ market deployed + initialised on Circle assets:", market);
+  console.log("   Fund liquidity yourself: supply USDC/EURC from a Circle-funded wallet (Earn tab).");
 })().catch((e) => { console.error("❌", e.message || e); process.exit(1); });
